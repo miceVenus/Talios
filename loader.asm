@@ -13,14 +13,13 @@ jmp     _start
 
 %define  MemStructBufferAddr 0x7E00
 
-%define  SelectorData32     0x10
-
 %define  DirEntryNameSize   11
 %define  DirEntrySize       32
 
 DirnumPerSector  equ        512 / DirEntrySize
 
 %macro Show_Normal_Msg_Through_Intr 3
+    ; ==== deprecated  until switched into protect mode====
     ; ==== parameter: (Row)1;(MsgLen)2;(MsgAddr)3 need passing ====
     mov     ax,     1301h
     mov     bx,     000fh
@@ -36,6 +35,7 @@ DirnumPerSector  equ        512 / DirEntrySize
 %endmacro
 
 %macro Show_Warnning_Msg_Through_Intr 3
+    ; ==== deprecated  until switched into protect mode====
     ; ==== parameter: (Row)1;(MsgLen)2;(MsgAddr)3 need passing ====
     mov     ax,     1301h
     mov     bx,     008ch
@@ -60,17 +60,49 @@ Get_MemStruct_Success_Msg:  db 'Get memory structure success', 0
 StartGetMemStruct_Msg:      db 'Start getting memory structure...', 0
 Fail_Set_SVGA_Mode:         db 'Fail to set SVGA Mode...', 0
 Success_Set_SVGA_Mode:      db 'Success to set SVGA Mode...', 0
+StartSwitchIntoProtectMode: db 'Start Switch Into Protect Mode', 0
+Support_IA32E_Mode_Msg:     db 'Support IA-32E Mode', 0
+
 
 DisplayPosition:    dw (80*0 + 39) * 2
 
-GdtPtr:             dw GdtLen - 1
-                    dd GdtBase
+GdtPtr_32:          dw GdtLen_32 - 1
+                    dd GdtBase_32
 
-GdtBase:
-    dq 0x0000000000000000  ; NULL 描述符
-    dq 0x00cf9a000000ffff  ; 代码段（基址 0，限长 4GB）
-    dq 0x00cf92000000ffff  ; 数据段（基址 0，限长 4GB）
-GdtLen equ $ - GdtBase
+GdtBase_32: dd      0x00000000, 0x00000000  ; NULL 描述符
+CODE_32:    dd      0x0000ffff, 0x00cf9a00  ; 代码段（基址 0，限长 4GB）
+DATA_32:    dd      0x0000ffff, 0x00cf9200  ; 数据段（基址 0，限长 4GB）
+
+GdtLen_32   equ     $ - GdtBase_32
+
+
+SelectorCode32  equ CODE_32 - GdtBase_32
+SelectorData32  equ DATA_32 - GdtBase_32
+
+GdtPtr_64:          dw GdtLen_64 - 1
+                    dq GdtBase_64
+
+GdtBase_64: dq      0x0000000000000000
+CODE_64:    dq      0x0020980000000000
+DATA_64:    dq      0x0000920000000000
+
+GdtLen_64   equ     $ - GdtBase_64
+
+
+SelectorCode64  equ CODE_64 - GdtBase_64
+SelectorData64  equ DATA_64 - GdtBase_64
+
+
+
+IdtPtr:             
+        dw      IdtLen - 1
+        dd      IdtBase_32
+
+IdtBase_32:
+        times   256     dq 0
+
+IdtLen  equ     $ - IdtBase_32
+
 
 section .s16lib
 
@@ -120,6 +152,13 @@ Function_Show_Hex:
         mov     dl,     al
 
         loop Show_Hex
+
+Show_Hex_Done:
+
+    pop     ebx
+    pop     edi
+    pop     ebp
+    ret
 
 
 
@@ -317,35 +356,19 @@ Set_SVGA_Mode:
     jmp Setting_SVGA_Success
 
     Setting_SVGA_fail:
-        Show_Warnning_Msg_Through_Intr 05, 24, Fail_Set_SVGA_Mode
+        Show_Warnning_Msg_Through_Intr  05, 24, Fail_Set_SVGA_Mode
 
     Setting_SVGA_Success:
-        Show_Normal_Msg_Through_Intr 05, 27, Success_Set_SVGA_Mode
+        Show_Normal_Msg_Through_Intr    05, 27, Success_Set_SVGA_Mode
 
 Open_Addr_A20:
     in      al,     0x92
     or      al,     00000010b
     out     0x92,   al
 
-    cli
-
-    db      0x66
-    lgdt    [GdtPtr]
-    mov     eax,    cr0
-    or      eax,    1b
-    mov     cr0,    eax
-
-    mov     ax,     SelectorData32
-    mov     fs,     ax
-    mov     eax,    cr0
-    and     al,     11111110b
-    mov     cr0,    eax
-
-    sti
-
 ;   ==== Start loading Message
 
-    Show_Normal_Msg_Through_Intr 02, 16, start_load_msg
+    Show_Normal_Msg_Through_Intr    02, 16, start_load_msg
 
     Call    Function_SearchKernelFile
 
@@ -362,7 +385,7 @@ Open_Addr_A20:
         out     dx,     al
         pop     dx
     
-    Show_Normal_Msg_Through_Intr 03, 33, StartGetMemStruct_Msg
+    Show_Normal_Msg_Through_Intr    03, 33, StartGetMemStruct_Msg
 
     mov         ebx,     0
     mov         ax,      0
@@ -382,9 +405,89 @@ Get_MemStruct:
     jmp         Get_MemStruct_Done
 
     Get_MemStruct_Fail:
-        Show_Warnning_Msg_Through_Intr 04, 25, Not_Found_KernelFile_Msg
+        Show_Warnning_Msg_Through_Intr  04, 25, Not_Found_KernelFile_Msg
         jmp     $
 
     Get_MemStruct_Done:
-        Show_Normal_Msg_Through_Intr 04, 28, Get_MemStruct_Success_Msg
+        Show_Normal_Msg_Through_Intr    04, 28, Get_MemStruct_Success_Msg
+
+
+Switch_Into_Protect_Mode:
+    
+    Show_Normal_Msg_Through_Intr    05, 30, StartSwitchIntoProtectMode
+
+    cli
+
+    db      0x66
+    lgdt    [GdtPtr_32]
+
+    mov     eax,    cr0
+    or      eax,    1b
+    mov     cr0,    eax
+
+    jmp     dword   SelectorCode32:Temp_Protect_Mode_Entry
+
+section .s32lib
+
+bits 32
+
+Function_Is_Support_IA32E_Mode:
+    ; ==== Is Support CPUID ====
+    ; ==== return: (EAX) 0(not support); 1(support) ====
+    pushfd
+    pushfd
+    xor     dword [esp], 0x00200000
+    popfd
+    pushfd
+    pop     eax
+    xor     eax, [esp]
+    popfd
+    and     eax, 0x00200000
+    cmp     eax, 0
+    jz      No_IA32E_Mode  ; === could not be inverted, not support CPUID ====
+
+    mov     eax, 0x80000000
+    cpuid
+    cmp     eax, 0x80000001
+    jb      No_IA32E_Mode  ; === if max ext < 0x80000001
+    mov     eax, 0x80000001
+    cpuid
+    test    edx, 0x20000000  ; === EDX bit 29 (LM bit) ====
+    jz      No_IA32E_Mode    ;
+
+    mov     eax, 1
+    ret
+
+No_IA32E_Mode:
+    mov     eax, 0
+    ret
+
+
+section .segment32
+
+bits 32
+
+Temp_Protect_Mode_Entry:
+    ; ==== a temp address to switch into IA-32E Mode ====
+    mov     ax,     SelectorData32
+    mov     ds,     ax
+    mov     es,     ax
+    mov     fs,     ax
+    mov     ss,     ax
+    mov     esp,    0x7E00
+
+    call    Function_Is_Support_IA32E_Mode
+
+    cmp     eax,    1
+    je      Has_Long_Mode
+
+    jmp     $
+
+Has_Long_Mode:
+    ; ==== Set up for IA-32E Mode ====
+
+    mov     ax,     0x7878
+    jmp     $
+
+
 
