@@ -452,6 +452,7 @@ Function_Is_Support_IA32E_Mode:
     jb      No_IA32E_Mode  ; === if max ext < 0x80000001
     mov     eax, 0x80000001
     cpuid
+
     test    edx, 0x20000000  ; === EDX bit 29 (LM bit) ====
     jz      No_IA32E_Mode    ;
 
@@ -486,8 +487,56 @@ Temp_Protect_Mode_Entry:
 Has_Long_Mode:
     ; ==== Set up for IA-32E Mode ====
 
+    ; ==== Page Table ====
+
+    mov     dword   [0x90000],  0x91007
+    mov     dword   [0x90800],  0x91007
+
+    mov     dword   [0x91000],  0x92007
+
+    mov     dword   [0x92000],  0x000083
+    mov     dword   [0x92008],  0x200083
+    mov     dword   [0x92010],  0x400083
+    mov     dword   [0x92018],  0x600083
+    mov     dword   [0x92020],  0x800083
+    mov     dword   [0x92028],  0xa00083
+
+    ; ==== Load GDTR For IA-32E Mode ====
+    db      0x66
+    lgdt    [GdtPtr_64]
+    mov     ax,     SelectorData64
+    mov     ds,     ax
+    mov     es,     ax
+    mov     fs,     ax
+    mov     gs,     ax
+    mov     ss,     ax
+
+    mov     esp,    0x7e00
+
+
+    mov     eax,    cr0
+    and     eax,    0x7fffffff
+    mov     cr0,    eax
+
+    mov     eax,    cr4
+    or      eax,    0x00000010
+    mov     cr4,    eax
+
+    mov     eax,    0x90000000
+    mov     cr3,    eax
+
+    mov     ecx,    0xC0000080
+    rdmsr
+    or      eax,    0x00000100
+    wrmsr
+
+    mov     eax,    cr0
+    or      eax,    0x80000000
+    mov     cr0,    eax
+
     mov     ax,     0x7878
     jmp     $
+    jmp     SelectorCode64:OffsetOfKernelFile
 
 
 
