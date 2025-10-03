@@ -515,27 +515,25 @@ Has_Long_Mode:
 
 
     mov     eax,    cr0
-    and     eax,    0x7fffffff
+    and     eax,    0x7fffffff  ; Clear PE bit
     mov     cr0,    eax
 
     mov     eax,    cr4
-    or      eax,    0x00000010
+    or      eax,    0x00000010  ; Open PAE
     mov     cr4,    eax
 
-    mov     eax,    0x90000000
+    mov     eax,    0x90000000  ; PML4 table address
     mov     cr3,    eax
 
     mov     ecx,    0xC0000080
     rdmsr
-    or      eax,    0x00000100
+    or      eax,    0x00000100  ; Set LME bit
     wrmsr
 
     mov     eax,    cr0
-    or      eax,    0x80000000
+    or      eax,    0x80000000  ; Set PG bit
     mov     cr0,    eax
 
-    mov     ax,     0x7878
-    jmp     $
     jmp     SelectorCode64:OffsetOfKernelFile
 
 

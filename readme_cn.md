@@ -32,3 +32,11 @@
 ### 10.1
 
     略摆 完善了下 loader.asm 写了一部分的head.asm
+
+### 10.2
+
+    摆了
+
+### 10.3
+
+    使用GAS汇编器实现head.S 主要定义了kernel 要用到的 GDT以及Page Tabels
