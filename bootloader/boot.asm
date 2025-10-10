@@ -1,3 +1,39 @@
+
+;|----------------------|
+;|	100000 ~ END	|
+;|	   KERNEL	|
+;|----------------------|
+;|	E0000 ~ 100000	|
+;| Extended System BIOS |
+;|----------------------|
+;|	C0000 ~ Dffff	|
+;|     Expansion Area   |
+;|----------------------|
+;|	A0000 ~ bffff	|
+;|   Legacy Video Area  |
+;|----------------------|
+;|	9f000 ~ A0000	|
+;|	 BIOS reserve	|
+;|----------------------|
+;|	90000 ~ 9f000	|
+;|	 kernel tmpbuf	|
+;|----------------------|
+;|	10000 ~ 90000	|
+;|	   LOADER	|
+;|----------------------|
+;|	8000 ~ 10000	|
+;|	  VBE info	|
+;|----------------------|
+;|	7e00 ~ 8000	|
+;|	  mem info	|
+;|----------------------|
+;|	7c00 ~ 7e00	|
+;|	 MBR (BOOT)	|
+;|----------------------|
+;|	0000 ~ 7c00	|
+;|	 BIOS Code	|
+;|----------------------|
+
 org                0x7c00
 
 jmp            label_start
@@ -30,35 +66,49 @@ BaseOfLoader   equ 0x1000
 OffsetOfLoader equ 0x00
 
 RootDirSectors          equ 14
-SectorNumOfRootDirStart equ 19
 FirstFATSecNum          equ 1
-SectorBalance           equ 17 ; 19 - 2  
+SectorBalance           equ 17 ; 19 - 2
+SectorNumOfRootDirStart equ 19  
 
 Odd:             db     0
 
 Func_ReadSector:
     ; ==== read sector from disk
-    ; ==== paramater ES:BX;CL(NUM);AX(LAB) need passing
+    ; ==== paramater ES:BX;CL(NUM);AX(LBA) need passing
+    ; ==== LBA to CHS conversion formula:
+    ; ==== Sector   = (LBA % SecPerTrk) + 1
+    ; ==== Head     = (LBA / SecPerTrk) % NumHeads
+    ; ==== Cylinder = LBA / (SecPerTrk * NumHeads)
     push        bp
     mov bp,     sp
     sub esp,    2
-    mov byte    [bp - 2], cl
+    mov byte    [bp - 2], cl    ; 保存要读取的扇区数
     push        bx
-    mov bl,     [BPB_SecPerTrk]
-    div bl      ; AX / BL -> AL = 磁道号, AH = 偏移量
-    inc ah      ; count start from 1
-    mov cl,     ah
-    mov dh,     al
-    and dh,     1
-    shr al,     1
-    mov ch,     al
+    
+    ; 第一步：计算 Sector = (LBA % SecPerTrk) + 1
+    xor dx,     dx              ; DX:AX = LBA (清空DX为除法准备)
+    mov bl,     [BPB_SecPerTrk] ; BL = 18
+    div bl                      ; AL = LBA / 18 (商), AH = LBA % 18 (余数)
+    inc ah                      ; 扇区号从1开始计数
+    mov cl,     ah              ; CL = 扇区号
+    
+    ; 第二步：计算 Head 和 Cylinder
+    ; 此时 AL = LBA / SecPerTrk
+    mov dh,     al              ; 暂存到DH
+    xor ah,     ah              ; AX = LBA / SecPerTrk
+    mov bl,     [BPB_NumHeads]  ; BL = 2
+    div bl                      ; AL = Cylinder, AH = Head
+    mov ch,     al              ; CH = 柱面号
+    mov dh,     ah              ; DH = 磁头号
+    
     pop bx
-    mov dl,     [BS_DrvNum]
-Lable_Go_One_Reading:
-    mov ah,     0x02
-    mov byte    al, [bp - 2]
+    mov dl,     [BS_DrvNum]     ; DL = 驱动器号
+
+    Go_On_Reading:
+    mov ah,     0x02            ; AH = 02h (读扇区功能)
+    mov byte    al, [bp - 2]    ; AL = 要读取的扇区数
     int 13h
-    jc Lable_Go_One_Reading
+    jc Go_On_Reading            ; 如果出错则重试
     add esp,    2
     pop bp
     ret
@@ -80,8 +130,8 @@ Func_Get_FAT_Entry:
     cmp dx,     0
     jz  Label_Even
     mov byte    [Odd],  1
-Label_Even:
 
+    Label_Even:
     xor dx,     dx
     mov bx,     [BPB_BytesPerSec]
     div bx
@@ -98,7 +148,7 @@ Label_Even:
     jnz Label_Even_2
     shr ax,     4
 
-Label_Even_2:
+    Label_Even_2:
     and ax,     0x0fff
     pop bx
     pop es
@@ -110,6 +160,10 @@ label_start:
     mov es,     ax
     mov ss,     ax
     mov sp,     BaseOfStack
+    
+    ; 保存 BIOS 传入的启动驱动器号
+    mov [BS_DrvNum], dl
+    
     ; ==== clear screen
 
     mov ax,     0600h
@@ -136,96 +190,51 @@ label_start:
     mov bp,     start_boot_msg
     int 10h
 
-    jmp Loop_Travel_Root_Dir
-
 Loop_Travel_Root_Dir:
-    mov cl,     SectorNumOfRootDirStart
-    mov ax,     RootDirSectors
-
-Loop_Root_Dir_Next:
-    cmp ax,     0
-    jz  Loop_Root_Dir_End
+    mov ax,     SectorNumOfRootDirStart
+    mov cx,     RootDirSectors
 
     mov bx,     0x8000
-
-    push        ax
-    push        cx
-
-    mov ax,     cx
-    mov cl,     1
     call        Func_ReadSector
 
-    pop         cx
-    pop         ax
+    Loop_Travel_Entries_Name:
 
-    inc cl
-    dec ax
- 
-Loop_Travel_Entries_Name:
+        mov dx,     [BPB_RootEntCnt]
 
-    mov dx,     0x10
-    mov bx,     0x8000
+        Loop_Entries_Name_Next:
+        cmp dx,     0
+        jz  Loop_Entries_Name_End
+        dec dx
 
-Loop_Entries_Name_Next:
-    cmp dx,     0
-    jz  Loop_Entries_Name_End
-    dec dx
+        Loop_Cmp_Entry_Name:
+            mov si,     Ld_File_Name
+            mov cx,     11
+            cld
 
-Loop_Cmp_Entry_Name:
+            Cmp_Entry_Name_Next:
+            cmp cx,     0
+            jz  Loop_Entries_Name_End
+            dec cx
 
-    push        ax
-    push        cx
-    push        dx
+            mov di,     bx
+            inc bx
 
-    mov si,     Ld_File_Name
-    cld
-    mov cx,     11
+            lodsb
+            cmp al,     [es:di]
+            jz  Cmp_Entry_Name_Next
+            jmp Cmp_Entry_Name_Diff
 
-Cmp_Entry_Name_Next:
-    cmp cx,     0
-    jz  Cmp_Entry_Name_End
-    dec cx
+        Cmp_Entry_Name_Diff:
+        and bx,     0xffe0
+        add bx,     0x20
+        jmp Loop_Entries_Name_Next
 
-    mov di,     bx
-    inc bx
+        Loop_Entries_Name_End:
+        cmp dx,     0
+        jz  Loop_Root_Dir_Fail
+        jmp Loop_Root_Dir_Success
 
-    lodsb
-    cmp al,     [es:di]
-    jz  Cmp_Entry_Name_Next
-    jmp Cmp_Entry_Name_Diff
-
-Cmp_Entry_Name_Diff:
-
-    pop         dx
-    pop         cx
-    pop         ax
-
-    and bx,     0xffe0
-    add bx,     0x20
-    jmp Loop_Entries_Name_Next
-
-Cmp_Entry_Name_End:
-    pop         dx
-    pop         cx
-    pop         ax
-
-    jmp Loop_Entries_Name_End
-
-
-
-Loop_Entries_Name_End:
-    cmp dx,     0
-    jz  Loop_Root_Dir_Next
-    jmp Loop_Root_Dir_End
-
-    
-
-Loop_Root_Dir_End:
-    cmp ax,     0
-    jz  Loop_Root_Dir_Fail
-    jmp Loop_Root_Dir_Success
-
-Loop_Root_Dir_Fail:
+    Loop_Root_Dir_Fail:
     ; ==== display on screnn : Not Found loader.bin
 
     mov ax,     1301h
@@ -240,7 +249,7 @@ Loop_Root_Dir_Fail:
     int 10h
     jmp $
 
-Loop_Root_Dir_Success:
+    Loop_Root_Dir_Success:
     ; ==== es:di point to entry of loader.bin
     and di,     0xffe0
     add di,     0x1a
@@ -284,7 +293,7 @@ Loop_Get_Loader_Next:
     jnz Loop_Get_Loader_Next
     jmp Loader_Jump
 
-Loader_Jump:
+    Loader_Jump:
     ; ==== jump to loader
     jmp BaseOfLoader:OffsetOfLoader
 

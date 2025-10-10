@@ -40,3 +40,7 @@
 ### 10.3
 
     使用GAS汇编器实现head.S 主要定义了kernel 要用到的 GDT以及Page Tabels
+
+### 10.4–10.10 
+    由原先的QEMU进行模拟转变为Bochs进行模拟；发现新版本 QEMU 的 INT 13h 软盘读扇区问题 因此放弃QEMU；移植一小部分的C RUNTIME（kernel/lib.h），实现一个用于调试的print工具
+---

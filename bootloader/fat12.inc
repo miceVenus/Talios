@@ -30,27 +30,40 @@ Odd:             db     0
 
 Func_ReadSector:
     ; ==== read sector from disk
-    ; ==== paramater ES:BX;CL(NUM);AX(LAB) need passing
+    ; ==== paramater ES:BX;CL(NUM);AX(LBA) need passing
+    ; ==== LBA to CHS conversion formula:
+    ; ==== Sector   = (LBA % SecPerTrk) + 1
+    ; ==== Head     = (LBA / SecPerTrk) % NumHeads
+    ; ==== Cylinder = LBA / (SecPerTrk * NumHeads)
     push        bp
     mov bp,     sp
     sub esp,    2
-    mov byte    [bp - 2], cl
+    mov byte    [bp - 2], cl    ; 保存要读取的扇区数
     push        bx
-    mov bl,     [BPB_SecPerTrk]
-    div bl      ; AX / BL -> AL = 磁道号, AH = 偏移量
-    inc ah      ; count start from 1
-    mov cl,     ah
-    mov dh,     al
-    and dh,     1
-    shr al,     1
-    mov ch,     al
+    
+    ; 第一步：计算 Sector = (LBA % SecPerTrk) + 1
+    xor dx,     dx              ; DX:AX = LBA (清空DX为除法准备)
+    mov bl,     [BPB_SecPerTrk] ; BL = 18
+    div bl                      ; AL = LBA / 18 (商), AH = LBA % 18 (余数)
+    inc ah                      ; 扇区号从1开始计数
+    mov cl,     ah              ; CL = 扇区号
+    
+    ; 第二步：计算 Head 和 Cylinder
+    ; 此时 AL = LBA / SecPerTrk
+    mov dh,     al              ; 暂存到DH
+    xor ah,     ah              ; AX = LBA / SecPerTrk
+    mov bl,     [BPB_NumHeads]  ; BL = 2
+    div bl                      ; AL = Cylinder, AH = Head
+    mov ch,     al              ; CH = 柱面号
+    mov dh,     ah              ; DH = 磁头号
+    
     pop bx
-    mov dl,     [BS_DrvNum]
+    mov dl,     [BS_DrvNum]     ; DL = 驱动器号
 Lable_Go_One_Reading:
-    mov ah,     0x02
-    mov byte    al, [bp - 2]
+    mov ah,     0x02            ; AH = 02h (读扇区功能)
+    mov byte    al, [bp - 2]    ; AL = 要读取的扇区数
     int 13h
-    jc Lable_Go_One_Reading
+    jc Lable_Go_One_Reading     ; 如果出错则重试
     add esp,    2
     pop bp
     ret

@@ -4,16 +4,19 @@ import os
 
 R = {}
 DISASM = {}
-DISASM_TARGET = "disloader"
+DISASM_TARGET = "disboot"
 SHOW_DISASM = True
 
 if SHOW_DISASM:
-    os.system(f"ndisasm -o 0x0000 {DISASM_TARGET[3:]}.bin > {DISASM_TARGET}.asm")
+    os.system(f"ndisasm -o 0x7c00 bin/{DISASM_TARGET[3:]}.bin > {DISASM_TARGET}.asm")
     with open(DISASM_TARGET + ".asm", 'r') as f:
         file_lines = f.readlines()
         for line in file_lines:
             addr , _, _,  asm = line.split(" ", maxsplit=3)
-            DISASM[int(addr, 16)] = asm.strip()
+            try:
+                DISASM[int(addr, 16)] = asm.strip()
+            except ValueError:
+                pass
 
 
     
@@ -45,11 +48,14 @@ def stop_handler(event):
 gdb.events.stop.connect(stop_handler)
 
 gdb.execute('target remote 127.0.0.1:1234')
+# gdb.execute('symbol-file bin/system')
+# gdb.execute('directory /home/bbm/workspace/System Dev/Talios/kernel')
 gdb.execute('set disassembly-flavor intel')
 gdb.execute('set architecture i386:x86-64')
 # User program entry
-gdb.execute('b *0x10000')
-gdb.execute('b *0x101C7')
+gdb.execute('b *0x7c00')
+gdb.execute('b *0x7C9B')
+gdb.execute('b *0x7D37')
 
 
 gdb.execute('continue')

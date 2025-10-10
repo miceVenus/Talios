@@ -2,7 +2,7 @@ org 0x10000
 
 jmp     _start
 
-%include 'fat12.inc'
+%include 'bootloader/fat12.inc'
 
 %define  BaseOfStack        0x7c00
 %define  BaseOfKernelAddr   0x00
@@ -347,24 +347,29 @@ _start:
     mov     ss,     ax
     mov     sp,     BaseOfStack
 
-Set_SVGA_Mode:
-    mov ax,     0x4F02
-    mov bx,     0x4180
-    int 10h
-    cmp ax,     0x004F
-    jne Setting_SVGA_fail
-    jmp Setting_SVGA_Success
-
-    Setting_SVGA_fail:
-        Show_Warnning_Msg_Through_Intr  05, 24, Fail_Set_SVGA_Mode
-
-    Setting_SVGA_Success:
-        Show_Normal_Msg_Through_Intr    05, 27, Success_Set_SVGA_Mode
-
 Open_Addr_A20:
     in      al,     0x92
     or      al,     00000010b
     out     0x92,   al
+
+    ;   ==== Enter Big Real Mode
+
+    cli
+
+    db      0x66
+    lgdt    [GdtPtr_32]
+
+    mov     eax,    cr0
+    or      eax,    1
+    mov     cr0,    eax
+
+    mov     ax,     SelectorData32
+    mov     fs,     ax
+    mov     eax,    cr0
+    and     al,     11111110b
+    mov     cr0,    eax
+
+    sti
 
 ;   ==== Start loading Message
 
@@ -405,16 +410,29 @@ Get_MemStruct:
     jmp         Get_MemStruct_Done
 
     Get_MemStruct_Fail:
-        Show_Warnning_Msg_Through_Intr  04, 25, Not_Found_KernelFile_Msg
-        jmp     $
+    Show_Warnning_Msg_Through_Intr  04, 25, Not_Found_KernelFile_Msg
+    jmp     $
 
     Get_MemStruct_Done:
-        Show_Normal_Msg_Through_Intr    04, 28, Get_MemStruct_Success_Msg
+    Show_Normal_Msg_Through_Intr    04, 28, Get_MemStruct_Success_Msg
 
+Set_SVGA_Mode:
+
+    mov ax,     0x4F02
+    mov bx,     0x4180
+    int 10h
+
+    cmp ax,     0x004F
+    jne Setting_SVGA_fail
+    jmp Setting_SVGA_Success
+
+    Setting_SVGA_fail:
+    Show_Warnning_Msg_Through_Intr  05, 24, Fail_Set_SVGA_Mode
+
+    Setting_SVGA_Success:
+    Show_Normal_Msg_Through_Intr    05, 27, Success_Set_SVGA_Mode
 
 Switch_Into_Protect_Mode:
-    
-    Show_Normal_Msg_Through_Intr    05, 30, StartSwitchIntoProtectMode
 
     cli
 
@@ -430,6 +448,7 @@ Switch_Into_Protect_Mode:
 section .s32lib
 
 bits 32
+
 
 Function_Is_Support_IA32E_Mode:
     ; ==== Is Support CPUID ====
@@ -513,16 +532,11 @@ Has_Long_Mode:
 
     mov     esp,    0x7e00
 
-
-    mov     eax,    cr0
-    and     eax,    0x7fffffff  ; Clear PE bit
-    mov     cr0,    eax
-
     mov     eax,    cr4
-    or      eax,    0x00000010  ; Open PAE
+    bts     eax,    5           ; Set PAE bit (bit 5, not bit 4!)
     mov     cr4,    eax
 
-    mov     eax,    0x90000000  ; PML4 table address
+    mov     eax,    0x90000  ; PML4 table address
     mov     cr3,    eax
 
     mov     ecx,    0xC0000080
@@ -531,7 +545,8 @@ Has_Long_Mode:
     wrmsr
 
     mov     eax,    cr0
-    or      eax,    0x80000000  ; Set PG bit
+    bts     eax,    0           ; Set PE bit
+    bts     eax,    31          ; Set PG bit
     mov     cr0,    eax
 
     jmp     SelectorCode64:OffsetOfKernelFile
