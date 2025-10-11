@@ -31,6 +31,8 @@
 void main(){
     // showColorBand();
     PrintkInit();
-    ColorPrintfk(0x004249b9, 0x00353a94, "This is a Test Line\n");
+    ColorPrintfk(0xffff, 0x0000, "This is a Test Line\n");
+    ColorPrintfk(0xffff, 0x0000, "This is another Test Line %d \n", 1289);
+    ColorPrintfk(0xffff, 0x0000, "This is another Test Line %X \n", 45646);
     while (1) {}
 }

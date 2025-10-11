@@ -85,30 +85,27 @@ Func_ReadSector:
     mov byte    [bp - 2], cl    ; 保存要读取的扇区数
     push        bx
     
-    ; 第一步：计算 Sector = (LBA % SecPerTrk) + 1
-    xor dx,     dx              ; DX:AX = LBA (清空DX为除法准备)
+    xor dx,     dx              ; DX:AX = LBA 
     mov bl,     [BPB_SecPerTrk] ; BL = 18
-    div bl                      ; AL = LBA / 18 (商), AH = LBA % 18 (余数)
-    inc ah                      ; 扇区号从1开始计数
-    mov cl,     ah              ; CL = 扇区号
+    div bl                      ; AL = LBA / 18 , AH = LBA % 18
+    inc ah                      ; count start from 1
+    mov cl,     ah              ; CL
     
-    ; 第二步：计算 Head 和 Cylinder
-    ; 此时 AL = LBA / SecPerTrk
-    mov dh,     al              ; 暂存到DH
+    mov dh,     al             
     xor ah,     ah              ; AX = LBA / SecPerTrk
     mov bl,     [BPB_NumHeads]  ; BL = 2
     div bl                      ; AL = Cylinder, AH = Head
-    mov ch,     al              ; CH = 柱面号
-    mov dh,     ah              ; DH = 磁头号
+    mov ch,     al              ; CH 
+    mov dh,     ah              ; DH
     
     pop bx
-    mov dl,     [BS_DrvNum]     ; DL = 驱动器号
+    mov dl,     [BS_DrvNum]     ; DL
 
     Go_On_Reading:
-    mov ah,     0x02            ; AH = 02h (读扇区功能)
-    mov byte    al, [bp - 2]    ; AL = 要读取的扇区数
+    mov ah,     0x02            ; AH = 02h 
+    mov byte    al, [bp - 2]    ; AL
     int 13h
-    jc Go_On_Reading            ; 如果出错则重试
+    jc Go_On_Reading      
     add esp,    2
     pop bp
     ret

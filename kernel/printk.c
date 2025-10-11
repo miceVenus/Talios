@@ -12,19 +12,21 @@
 #define     YCharResolution \
             (screenInfo.YPixelResolution / screenInfo.charHeight)*screenInfo.charHeight
 
-#define     AutoPutChar(x) \
-            if(screenInfo.cursorX < XCharResolution){ \
-                Putchar(x); \
-                screenInfo.cursorX++; \
-            }else{ \
-                screenInfo.cursorX = 0; \
-                screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0; \
-                Putchar(x); \
-                screenInfo.cursorX++; \
-            } \
-
-
 ScreenInfo screenInfo;
+
+// This is a Simple PutChar For Auto Maintain screen info
+void AutoPutChar(char x, uint32_t fc, uint32_t bc);
+inline void AutoPutChar(char x, uint32_t fc, uint32_t bc){
+    if(screenInfo.cursorX < XCharResolution){
+        Putchar(x, fc, bc);
+        screenInfo.cursorX++;
+    }else{ \
+        screenInfo.cursorX = 0;
+        screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0;
+        Putchar(x, fc, bc);
+        screenInfo.cursorX++;
+    }
+}
 
 int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
     char buffer[MAX_BUFFER_LEN];
@@ -36,66 +38,39 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
     va_end(args);
 
     for(int i = 0, Offset; i < BufferLen; i++){
-        if(buffer[i] == '\\'){
-            i++;
-            switch (buffer[i]){
-            case 't':
-                Offset = TAB_WIDTH - screenInfo.cursorX % TAB_WIDTH;
-                while(Offset--){
-                    Putchar(' ', ForeColor, BackColor);
-                    screenInfo.cursorX++;
-                }
-                break;
 
-            case 'n':
-                if(screenInfo.cursorY < (screenInfo.YPixelResolution / screenInfo.charHeight))
-                    screenInfo.cursorY++;
-    
-                screenInfo.cursorX = 0;
-                break;
-
-            case 'b':
-                if(screenInfo.cursorX > 0){
-                    screenInfo.cursorX--;
-                    Putchar(' ', ForeColor, BackColor);
-                    screenInfo.cursorX++;
-                }else{
-                    // TO BE COMPLETE
-                }
-                break;
-
-            case '\\':
-                if(screenInfo.cursorX < XCharResolution){
-                    Putchar('\\', ForeColor, BackColor);
-                    screenInfo.cursorX++;
-                }else{
-                    screenInfo.cursorX = 0;
-                    screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0;
-                    Putchar('\\', ForeColor, BackColor);
-                }
-                break;
-
-            default:
-                if(screenInfo.cursorX < XCharResolution){
-                    Putchar('?', ForeColor, BackColor);
-                    screenInfo.cursorX++;
-                }else{
-                    screenInfo.cursorX = 0;
-                    screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0;
-                    Putchar('?', ForeColor, BackColor);
-                    screenInfo.cursorX++;
-                }
+        switch (buffer[i]){
+        case '\t':
+            Offset = TAB_WIDTH - screenInfo.cursorX % TAB_WIDTH;
+            while(Offset--){
+                Putchar(' ', ForeColor, BackColor);
+                screenInfo.cursorX++;
             }
-        }else{
-            if(screenInfo.cursorX < XCharResolution){
-                Putchar(buffer[i], ForeColor, BackColor);
+            break;
+
+        case '\n':
+            if(screenInfo.cursorY < (screenInfo.YPixelResolution / screenInfo.charHeight))
+                screenInfo.cursorY++;
+
+            screenInfo.cursorX = 0;
+            break;
+
+        case '\b':
+            if(screenInfo.cursorX > 0){
+                screenInfo.cursorX--;
+                Putchar(' ', ForeColor, BackColor);
                 screenInfo.cursorX++;
             }else{
-                screenInfo.cursorX = 0;
-                screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0;
-                Putchar(buffer[i], ForeColor, BackColor);
-                screenInfo.cursorX++;
+                // TO BE COMPLETE
             }
+            break;
+
+        case '\\':
+            AutoPutChar('\\', ForeColor, BackColor);
+            break;
+
+        default:
+            AutoPutChar(buffer[i], ForeColor, BackColor);
         }
     }
     return 0;
@@ -103,15 +78,15 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
 
 int VsPrintfk(char* buffer, const char* fmt, va_list args){
     
-    char    CurrentChar  =  *fmt;
+    char    CurrentChar  =  *(fmt++);
     int     BufferIndex  =  0;
-    char    TempBuffer[20];
+    char    TempBuffer[40];
 
-    int     Upper;
-    unsigned int ArgNum;
-    int     IndexIncre;
-    char    *ArgString;
-    void    *ArgPtr;
+    int     Upper = 0;
+    unsigned int ArgNum = 0;
+    int     IndexIncre = 0;
+    char    *ArgString = NULL;
+    void    *ArgPtr = NULL;
 
     while(CurrentChar   != '\0'){
 
@@ -134,7 +109,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
                 
                 ArgNum = va_arg(args, unsigned int);
 
-                IndexIncre = ToHexString(TempBuffer, ArgNum, Upper);
+                IndexIncre = NumToString(TempBuffer, ArgNum, 16, Upper);
 
                 if(IndexIncre + BufferIndex >= MAX_BUFFER_LEN){
                     CurrentChar = 0;
@@ -148,7 +123,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
             case 'd':
                 ArgNum = va_arg(args, int);
 
-                IndexIncre = ToDeciString(TempBuffer, ArgNum);
+                IndexIncre = NumToString(TempBuffer, ArgNum, 10, 0);
 
                 if(IndexIncre + BufferIndex >= MAX_BUFFER_LEN){
                     CurrentChar = 0;
@@ -179,7 +154,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
             case 'p':              
                 ArgPtr = va_arg(args, void*);
 
-                IndexIncre = ToPtrString(TempBuffer, ArgPtr);
+                IndexIncre = NumToString(TempBuffer, (intptr_t)ArgPtr, 16, 0);
 
                 if(IndexIncre + BufferIndex >= MAX_BUFFER_LEN){
                     CurrentChar = 0;
@@ -206,7 +181,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
     }
 
     buffer[BufferIndex] = '\0';
-    return BufferIndex + 1;
+    return BufferIndex;
 }
 
 // TO BE COMPLETE

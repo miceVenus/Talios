@@ -1,6 +1,23 @@
 #ifndef LIB_H
 #define LIB_H
 
+#define DoDiv(num, base) ({\
+        int __res; \
+        __asm__("divq %%rcx":"=a"(num), "=d"(__res):"0"(num), "1"(0), "c"(base)); \
+        __res; })
+
+// ONLY IN GNU C !!!!!!
+#define SwitchMem(Ptr1, Ptr2) ({\
+        typeof(*(Ptr1)) Temp; \
+        Temp = *Ptr1; \
+        *Ptr1 = *Ptr2; \
+        *Ptr2 = Temp; })
+
+#define STR(x) #x
+
+#define CONCAT(x1, x2) x1 ## x2
+
+
 typedef unsigned long uintptr_t;
 
 static inline void StringCopy(char *Src, char *Dst){
@@ -25,6 +42,22 @@ static inline int StringLen(char *Str){
     return Ptr - Str;
 }
 
+/// @brief Reverse a string simply;
+/// @param Str Target String
+/// @return Reversed String
+static char *StringReverse(char *Str){
+    int Length = StringLen(Str);
+    char *TailPtr = Length - 1 + Str;
+    char *HeadPtr = Str;
+    while(TailPtr != HeadPtr){
+        SwitchMem(HeadPtr, TailPtr);
+        HeadPtr++;
+        TailPtr--;
+    }
+
+    return Str;
+}
+
 inline void MemCopy(char *Src, char *Dst, size_t n){
 
     short int IsBackcopy = 0;
@@ -47,16 +80,42 @@ inline void MemSet(char *Src, size_t n, char num){
     while(Src < Dst) *(Src++) = num;
 }
 
-static inline int ToDeciString(char *Buffer, int Decimal){
-    return 1;
-}
+/// @brief Transfer A Num To A String Simply
+/// @param Buffer Because that we Can't use malloc for now
+/// @param Num Target Num
+/// @param base Max 36;
+/// @param Upper 
+/// @return Buffer Len;
+static int NumToString(char *Buffer,  long Num, unsigned int base, int Upper){
+    int Res;
+    uint8_t IsMinus = Num < 0 ? 1 : 0;
+    char *Ptr = Buffer;
+    char Character;
 
-static inline int ToHexString(char *Buffer, int Decimal, int Upper){
-    return 1;
-}
+    while(Num){
+        Res = DoDiv(Num, base);
+        if(Res > 9) Character = Upper ? Res - 10 + 'A': Res - 10 + 'a';
+        else        Character = Res + '0';
+        *(Ptr++) =  Character;
+    }
 
-static inline int ToPtrString(char *Buffer, void *Ptr){
-    return 1;
+    if(IsMinus)     *(Ptr++) =  '-';
+    if(base == 16){
+        *(Ptr++) =  'x';
+        *(Ptr++) =  '0';
+    }
+
+    char *TailPtr = Ptr - 1;
+    char *HeadPtr = Buffer;
+    while(HeadPtr < TailPtr) {
+        SwitchMem(HeadPtr, TailPtr);
+        HeadPtr++;
+        TailPtr--;
+    }
+
+    *(Ptr++) =  '\0';
+
+    return Ptr - Buffer - 1;
 }
 
 #endif

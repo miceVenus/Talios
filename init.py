@@ -45,17 +45,16 @@ def stop_handler(event):
         print(f"asm : {DISASM.get(int(R['rip'], 16), '???')}")
     
 
-gdb.events.stop.connect(stop_handler)
+# gdb.events.stop.connect(stop_handler)
 
 gdb.execute('target remote 127.0.0.1:1234')
-# gdb.execute('symbol-file bin/system')
-# gdb.execute('directory /home/bbm/workspace/System Dev/Talios/kernel')
-gdb.execute('set disassembly-flavor intel')
+gdb.execute('directory "/home/bbm/workspace/System Dev/Talios/kernel"')
+gdb.execute('directory "/home/bbm/workspace/System Dev/Talios/bootloader"')
+gdb.execute('symbol-file "/home/bbm/workspace/System Dev/Talios/bin/system.bin"')
 gdb.execute('set architecture i386:x86-64')
+gdb.execute('set disassembly-flavor intel')
+
 # User program entry
-gdb.execute('b *0x7c00')
-gdb.execute('b *0x7C9B')
-gdb.execute('b *0x7D37')
-
-
+gdb.execute('hb *0x100000')  # __start
 gdb.execute('continue')
+gdb.execute('b main')  # main
