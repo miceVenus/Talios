@@ -45,6 +45,55 @@ entry_64:
     movq    %rax,   %gs
     movq    %rax,   %ss
 
+setup_IDT:
+    leaq    ignore_IDT(%rip),   %rdx
+    mov     %dx,    %ax
+    shrq    $16,    %rdx
+    mov     %dx,    %cx
+    shrq    $16,    %rdx
+    shlq    $48,    %rcx
+    addq    %rcx,   %rax
+    mov     $(0x8e00 << 32),    %rcx
+    addq    %rcx,   %rax
+    mov     $(0x8 << 8),        %rcx
+    addq    %rcx,   %rax        # Init IDT rdx:rax
+
+    movq    IdtTable(%rip),     %rdi
+    mov     $256,   %rcx
+
+    st_IDT:
+
+        dec     %rcx
+        movq    %rax,   (%rdi)
+        movq    %rdx,   8(%rdi)
+        addq    $0x10,  %rdi
+        cmp     $0,     %rcx
+        jne     st_IDT
+
+setup_TSS64:
+	leaq	TssTable(%rip),	    %rdx
+	xorq	%rax,	    %rax
+	xorq	%rcx,	    %rcx
+	movq	$0x89,	    %rax
+	shlq	$40,	    %rax
+	movl	%edx,	    %ecx
+	shrl	$24,	    %ecx
+	shlq	$56,	    %rcx
+	addq	%rcx,	    %rax
+	xorq	%rcx,	    %rcx
+	movl	%edx,	    %ecx
+	andl	$0xffffff,	%ecx
+	shlq	$16,	    %rcx
+	addq	%rcx,	    %rax
+	addq	$103,	    %rax
+	leaq	GdtTable(%rip),	    %rdi
+	movq	%rax,	    64(%rdi)
+	shrq	$32,	    %rdx
+	movq	%rdx,	    72(%rdi)
+
+	mov	$0x40,	%ax
+	ltr	%ax
+
     movq    $0xffff800000007E00,    %rsp  # Set stack pointer
 
     movq    go_to_kernel(%rip), %rax
@@ -55,6 +104,12 @@ entry_64:
 go_to_kernel:
     .quad  main
 
+
+
+
+
+ignore_IDT:
+    iret
 # Page Table
 
 .align  8
@@ -115,7 +170,7 @@ GdtTable:
     .quad   0x0000f20000000000  # User Data Segment Offset 0x20
     .quad   0x00cf9a000000ffff  # Kernel Code Segment 32-bit Offset 0x28
     .quad   0x00cf92000000ffff  # Kernel Data Segment 32-bit Offset 0x30
-    .fill   10, 8, 0             # TSS Offset 0x38
+    .fill   10, 8, 0             # TSS Offset 0x40 jump 0x7
 
 
 .set GdtLen,    . - GdtTable
@@ -152,6 +207,6 @@ TssPtr:
 
 TssTable:
     
-    .fill   10, 8, 0
+    .fill   13, 8, 0
 
 .set TssLen,     . - TssTable

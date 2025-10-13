@@ -56,6 +56,7 @@ $(OBJDIR)/%.o: $(KENRELDIR)/%.c | $(OBJDIR)
 $(OBJDIR)/%.o: $(KENRELDIR)/%.S | $(OBJDIR)
 	gcc -E $< -o head.s
 	$(AS) $(ASFLAGS) head.s -o $@
+	rm head.s
 
 # LINKER
 $(TARGET): $(OBJS) $(KENRELDIR)/kernel.lds | $(BINDIR)
