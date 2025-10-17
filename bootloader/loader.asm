@@ -280,48 +280,44 @@ Function_Load_Kernel_File:
     mov     es,     cx
     mov     cx,     OffsetTempOfKernelFile
     mov     bx,     cx
+    mov     edi,    OffsetOfKernelFile
 
     Move_Kernel_Temp_Addr:
-        ; ==== Warning capacity of BX is Only 33k ====
+        ; ==== Warning capacity of BX is Only 33k (Has Been Fixed)====
         push    ax
         add     ax,     SectorBalance
         add     ax,     RootDirSectors
 
         mov     cl,     1 
         call    Func_ReadSector
-        add     bx,     word [BPB_BytesPerSec]
+    
+        Move_Kernel_High_Addr:
+        ; ==== Move Kernel File From Temp Addr To Final Addr ====
+        mov     esi,    OffsetTempOfKernelFile
+        mov     cx,     word [BPB_BytesPerSec]
 
+        mov     ax,     BaseTempOfKernelAddr
+        mov     es,     ax
+        mov     ax,     BaseOfKernelAddr
+        mov     fs,     ax
+
+        Move_Kernel_High_Addr_loop:
+
+            mov     al,     byte    [es:esi]
+            mov     byte    [fs:edi],     al
+
+            inc     esi
+            inc     edi
+
+            loop   Move_Kernel_High_Addr_loop
+    
         pop     ax
 
         call    Func_Get_FAT_Entry
 
-        cmp     ax,     0x0fff
-        jz      Move_Kernel_High_Addr
-        jmp     Move_Kernel_Temp_Addr
-    
-    Move_Kernel_High_Addr:
-        ; ==== Move Kernel File From Temp Addr To Final Addr ====
-    add     bx,     word [BPB_BytesPerSec]
-    sub     bx,     OffsetTempOfKernelFile
-    mov     cx,     bx
-
-    mov     ax,     BaseTempOfKernelAddr
-    mov     es,     ax
-    mov     ax,     BaseOfKernelAddr
-    mov     fs,     ax
-
-    mov     esi,    OffsetTempOfKernelFile
-    mov     edi,    OffsetOfKernelFile
-
-    Move_Kernel_High_Addr_loop:
-
-        mov     al,     byte    [es:esi]
-        mov     byte    [fs:edi],     al
-
-        inc     esi
-        inc     edi
-
-        loop   Move_Kernel_High_Addr_loop
+        cmp ax, 0x0fff
+        jz  ALL_Done
+        jmp Move_Kernel_Temp_Addr
 
     ALL_Done:
 
@@ -352,7 +348,7 @@ Open_Addr_A20:
     or      al,     00000010b
     out     0x92,   al
 
-    ;   ==== Enter Big Real Mode
+    ;   ==== Enter Big Real Mode A Powerful FS!!!!
 
     cli
 

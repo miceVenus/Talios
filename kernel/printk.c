@@ -107,7 +107,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
             case 'X':
                 Upper = CurrentChar < 'a' ? 1 : 0; 
                 
-                ArgNum = va_arg(args, unsigned int);
+                ArgNum  = Upper ? va_arg(args, unsigned long): va_arg(args, unsigned int); // break the Protocol Just For Easy
 
                 IndexIncre = NumToString(TempBuffer, ArgNum, 16, Upper);
 

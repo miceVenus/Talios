@@ -54,9 +54,9 @@ $(OBJDIR)/%.o: $(KENRELDIR)/%.c | $(OBJDIR)
 
 # HEAD ASSMBLE RULE
 $(OBJDIR)/%.o: $(KENRELDIR)/%.S | $(OBJDIR)
-	gcc -E $< -o head.s
-	$(AS) $(ASFLAGS) head.s -o $@
-	rm head.s
+	gcc -E $< -o temp.s
+	$(AS) $(ASFLAGS) temp.s -o $@
+	rm temp.s
 
 # LINKER
 $(TARGET): $(OBJS) $(KENRELDIR)/kernel.lds | $(BINDIR)

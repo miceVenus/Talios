@@ -18,10 +18,6 @@ __start:
 
     lgdt    GdtPtr(%rip) # For the purpose of dynamic memory allocation
 
-    # Reload IDT
-
-    lidt    IdtPtr(%rip)
-
     # Reload Page Table
 
     movq    $0x101000,  %rax  # PML4 table physic address
@@ -37,7 +33,7 @@ switch_seg:
 
 entry_64:
 
-    movq $SelectorData64,    %rax
+    movq    $SelectorData64,    %rax
 
     movq    %rax,   %ds
     movq    %rax,   %es
@@ -55,10 +51,10 @@ setup_IDT:
     addq    %rcx,   %rax
     mov     $(0x8e00 << 32),    %rcx
     addq    %rcx,   %rax
-    mov     $(0x8 << 8),        %rcx
+    mov     $(0x8 << 16),        %rcx
     addq    %rcx,   %rax        # Init IDT rdx:rax
 
-    movq    IdtTable(%rip),     %rdi
+    leaq    IdtTable(%rip),     %rdi
     mov     $256,   %rcx
 
     st_IDT:
@@ -69,6 +65,10 @@ setup_IDT:
         addq    $0x10,  %rdi
         cmp     $0,     %rcx
         jne     st_IDT
+
+    # Reload IDT after setup
+
+    lidt    IdtPtr(%rip)
 
 setup_TSS64:
 	leaq	TssTable(%rip),	    %rdx
@@ -93,7 +93,7 @@ setup_TSS64:
 
 	mov	$0x40,	%ax
 	ltr	%ax
-
+    
     movq    $0xffff800000007E00,    %rsp  # Set stack pointer
 
     movq    go_to_kernel(%rip), %rax
@@ -109,7 +109,47 @@ go_to_kernel:
 
 
 ignore_IDT:
-    iret
+    cld
+    pushq   %rbx
+    pushq   %rbp
+    pushq   %r12
+    pushq   %r13
+    pushq   %r14
+    pushq   %r15
+
+    movq    %es,    %rax
+    pushq   %rax
+    movq    %ds,    %rax
+    pushq   %rax
+
+    movq    $0x10,  %rax    # Just For Safe When Privilege level Switch
+    movq    %rax,   %es
+    movq    %rax,   %ds
+
+    mov     $0xff0000,      %rdi
+    mov     $0x0,           %rsi
+    leaq    ignore_msg(%rip),   %rdx
+
+    movq    $0x0,   %rax    # Must Be Set !!!!!!!!!
+
+    callq   ColorPrintfk    # system ABI request Stack must be aligned by 16B When calling C
+
+    loop:   
+        jmp loop
+
+    popq    %rax
+    movq    %rax,   %ds
+    popq    %rax
+    movq    %rax,   %es
+
+    popq    %r15
+    popq    %r14
+    popq    %r13
+    popq    %r12
+    popq    %rbp
+    popq    %rbx
+
+    iretq
 # Page Table
 
 .align  8
@@ -162,9 +202,10 @@ GdtPtr:
     .word GdtLen - 1
     .quad GdtTable
 
+.align 8
 GdtTable:    
     .quad   0x0000000000000000  # NULL Offset 0
-    .quad   0x0020980000000000  # Kernel Code Segment Offset 0x8
+    .quad   0x0020980000000000  # Kernel Code Segment Offset 0x8 Would Be Changed After Access
     .quad   0x0000920000000000  # Kernel Data Segment Offset 0x10
     .quad   0x0020f80000000000  # User Code Segment Offset 0x18
     .quad   0x0000f20000000000  # User Data Segment Offset 0x20
@@ -189,6 +230,7 @@ IdtPtr:
     .word      IdtLen - 1
     .quad      IdtTable
 
+.align 8
 IdtTable:
     
     .fill   512, 8, 0
@@ -205,8 +247,12 @@ TssPtr:
     .word      TssLen - 1
     .quad      TssTable
 
+.align 8
 TssTable:
     
     .fill   13, 8, 0
 
 .set TssLen,     . - TssTable
+
+ignore_msg: 
+    .asciz  "Not Implemented Exception Or Interrupt!!!! I'm Gone PLZ \n"

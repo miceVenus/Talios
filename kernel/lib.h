@@ -1,9 +1,26 @@
 #ifndef LIB_H
 #define LIB_H
 
+
+#ifndef uintptr_t
+typedef unsigned long uintptr_t;
+#endif
+
+#ifndef size_t
+typedef unsigned long size_t;
+#endif
+
+#ifndef uintptr_t
+typedef unsigned char uint8_t;
+#endif
+
+#define sti()  __asm__ volatile("sti":::"memory")
+#define cli()  __asm__ volatile("cli":::"memory")
+
+
 #define DoDiv(num, base) ({\
         int __res; \
-        __asm__("divq %%rcx":"=a"(num), "=d"(__res):"0"(num), "1"(0), "c"(base)); \
+        __asm__ volatile("divq %%rcx":"=a"(num), "=d"(__res):"0"(num), "1"(0), "c"(base)); \
         __res; })
 
 // ONLY IN GNU C !!!!!!
@@ -16,9 +33,6 @@
 #define STR(x) #x
 
 #define CONCAT(x1, x2) x1 ## x2
-
-
-typedef unsigned long uintptr_t;
 
 static inline void StringCopy(char *Src, char *Dst){
     char *Ptr = Src;
@@ -86,12 +100,15 @@ inline void MemSet(char *Src, size_t n, char num){
 /// @param base Max 36;
 /// @param Upper 
 /// @return Buffer Len;
-static int NumToString(char *Buffer,  long Num, unsigned int base, int Upper){
+static int NumToString(char *Buffer, long Num, unsigned int base, int Upper){
     int Res;
-    uint8_t IsMinus = Num < 0 ? 1 : 0;
+    unsigned char IsMinus = Num < 0 && (base == 10) ? 1 : 0;
     char *Ptr = Buffer;
     char Character;
-
+    
+    if(!Num)
+        *(Ptr++) =  '0';
+        
     while(Num){
         Res = DoDiv(Num, base);
         if(Res > 9) Character = Upper ? Res - 10 + 'A': Res - 10 + 'a';

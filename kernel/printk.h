@@ -4,6 +4,14 @@
 #include <stdint.h>
 #include <stdarg.h>
 
+enum COLOR{
+    RED     = 0xFF0000,
+    WHITE   = 0xFFFFFF,
+    BLACK   = 0x000000,
+    YELLOW  = 0xFFE820,
+    BLUE    = 0x0062FF
+};
+
 typedef struct ScreenInfo{
     int XPixelResolution;
     int YPixelResolution;
