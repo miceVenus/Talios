@@ -75,12 +75,14 @@ all: $(KERNELBIN) $(BOOTLOADER)
 .PHONY: run
 run: all $(BOCHSFILE)
 	./assmble.sh
-	$(BOCHS) -f $(BOCHSFILE)
+	sed -i 's/gdbstub/# gdbstub/g' $(BOCHSFILE)
+	$(BOCHS) -q -f $(BOCHSFILE)
 
 .PHONY: debug
 debug: all $(BOCHSFILE)
 	./assmble.sh
-	$(BOCHS) -f $(BOCHSFILE) -dbg
+	sed -i 's/# gdbstub/gdbstub/g' $(BOCHSFILE)
+	$(BOCHS) -q -f $(BOCHSFILE)
 
 .PHONY: clean
 clean:

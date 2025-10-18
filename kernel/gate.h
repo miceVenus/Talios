@@ -2,7 +2,10 @@
 #define GATE_H
 
 #define LTR(n) do{\
-    __asm__ volatile("ltr %%ax"::"a"(n << 3):"memory");\
+    unsigned long TR;\
+    unsigned long Selector = (n << 3);\
+    __asm__ volatile("str %0" : "=r"(TR));\
+    if(TR != Selector) __asm__ volatile("ltr %%ax"::"a"(Selector):"memory");\
 } while(0)
 
 #define SetIdtGate(GateSelector, flag, Ist, CodeAddr) do {                \

@@ -121,7 +121,8 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
                 break;
 
             case 'd':
-                ArgNum = va_arg(args, int);
+            case 'D':
+                ArgNum = CurrentChar == 'D' ? va_arg(args, long) : va_arg(args, int);
 
                 IndexIncre = NumToString(TempBuffer, ArgNum, 10, 0);
 
