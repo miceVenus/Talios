@@ -72,7 +72,7 @@ static char *StringReverse(char *Str){
     return Str;
 }
 
-inline void MemCopy(char *Src, char *Dst, size_t n){
+inline void memcopy(char *Src, char *Dst, size_t n){
 
     short int IsBackcopy = 0;
     uintptr_t SrcPtr = (uintptr_t)Src;
@@ -89,7 +89,7 @@ inline void MemCopy(char *Src, char *Dst, size_t n){
     }
 }
 
-inline void MemSet(char *Src, size_t n, char num){
+static inline void memset(char *Src, size_t n, char num){
     char *Dst = Src + n;
     while(Src < Dst) *(Src++) = num;
 }
