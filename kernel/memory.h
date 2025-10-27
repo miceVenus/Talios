@@ -18,11 +18,35 @@
 #define PAGE_2M_MASK    (~ (PAGE_2M_SIZE - 1))
 #define PAGE_4K_MASK    (~ (PAGE_4K_SIZE - 1))
 
-#define PAGE_2M_ALIGN(addr) (((unsigned long)addr + PAGE_2M_SIZE - 1) & PAGE_2M_MASK)
-#define PAGE_4K_ALIGN(addr) (((unsigned long)addr + PAGE_4K_SIZE - 1) & PAGE_4K_MASK)
+#define PAGE_2M_ALIGN_DOWN(addr) ((unsigned long)addr & PAGE_2M_MASK)
+#define PAGE_4K_ALIGN_DOWN(addr) ((unsigned long)addr & PAGE_4K_MASK)
+#define PAGE_2M_ALIGN_UP(addr) (((unsigned long)addr + PAGE_2M_SIZE - 1) & PAGE_2M_MASK)
+#define PAGE_4K_ALIGN_UP(addr) (((unsigned long)addr + PAGE_4K_SIZE - 1) & PAGE_4K_MASK)
 
 #define VIRT_TO_PHY(addr)   ((unsigned long)addr - PAGE_OFFSET)
 #define PHY_TO_VIRT(addr)   ((unsigned long *)((unsigned long)addr + PAGE_OFFSET))
+
+#define PAGE_2M_INDEX(Paddr)             (Paddr >> PAGE_2M_SHIFT)
+#define BITS_MAP_INDEX(Paddr)            (PAGE_2M_INDEX(Paddr) >> BITS_PER_LONG)
+#define BITS_MAP_BIT_OFFSET(Paddr)       (PAGE_2M_INDEX(Paddr) % BITS_PER_LONG)
+#define BITS_MAP_OFFSET(Paddr)           (1UL << BITS_MAP_BIT_OFFSET(Paddr))
+
+#define BITS_PER_LONG     ((sizeof(long) << 3))
+
+// Set a Small Mem Gap
+#define MEM_GAP_ALIGN(addr)  (((unsigned long)addr + (sizeof(long) << 5)) & (~(sizeof(long) - 1)))
+
+#define PATTR(attr)     (1UL << attr)
+
+
+enum PageAttribute{
+    PG_PTable_Maped = 0 ,
+    PG_Kernel_Init      , 
+    PG_Active           ,
+    PG_Kernel           ,
+    PG_Referenced       ,
+    PG_K_Share_To_U
+};
 
 struct E820{
     unsigned long address;
@@ -31,12 +55,12 @@ struct E820{
 }__attribute__((packed));
 
 struct GlobalMemDescriptor{
-    struct E820 descriptor[32];
+    struct E820 descriptor[MAX_GMD_LEN];
     unsigned int GMDLength;
 
     unsigned long*  BitsMap;
-    unsigned long   BitsMapSize;
-    unsigned long   BitsMapLength;
+    unsigned long   BitsMapSize;    // Total bits in BitsMap
+    unsigned long   BitsMapLength;  // Bytes Of BitsMap
 
     struct Page*    PagesGroup;
     unsigned long   PagesSize;
@@ -83,5 +107,6 @@ struct Page{
 };
 
 void InitMemory();
+void PageInit(struct Page *p, unsigned long flag);
 
 #endif

@@ -17,8 +17,8 @@ void main(){
     
     ColorPrintfk(WHITE, BLACK, "This is a Test Line\n");
     ColorPrintfk(WHITE, BLACK, "This is another Test Line %d \n", 1289);
-    ColorPrintfk(WHITE, BLACK, "This is another Test Line %X \n", 123135);
-    ColorPrintfk(WHITE, BLACK, "This is another Test Line %p \n", (void*)SetTss);
+    ColorPrintfk(WHITE, BLACK, "This is another Test Line %X \n", 12313522222222);
+    ColorPrintfk(WHITE, BLACK, "This is another Test Line %p \n", (void *)SetTss);
 
     int i = 1/0;
     while (1) {}

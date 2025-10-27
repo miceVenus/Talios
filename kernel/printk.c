@@ -83,7 +83,7 @@ int VsPrintfk(char* buffer, const char* fmt, va_list args){
     char    TempBuffer[40];
 
     int     Upper = 0;
-    unsigned int ArgNum = 0;
+    unsigned long ArgNum = 0;
     int     IndexIncre = 0;
     char    *ArgString = NULL;
     void    *ArgPtr = NULL;

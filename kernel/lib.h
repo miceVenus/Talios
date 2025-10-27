@@ -15,7 +15,20 @@ typedef unsigned char uint8_t;
 #endif
 
 #define sti()  __asm__ volatile("sti":::"memory")
+
 #define cli()  __asm__ volatile("cli":::"memory")
+
+#define GetCr3() ({ \
+    unsigned long temp;\
+    __asm__ volatile("movq %%cr3, %0":"=r"(temp)::"memory");\
+    temp;})
+
+#define SetCr3(num) __asm__ volatile("movq %0, %%cr3"::"r"(num):"memory")
+
+#define FlushTLB() ({   \
+    unsigned long temp; \
+    temp = GetCr3();    \
+    SetCr3(temp);})
 
 
 #define DoDiv(num, base) ({\
