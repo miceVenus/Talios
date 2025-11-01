@@ -55,6 +55,6 @@ gdb.execute('set architecture i386:x86-64')
 gdb.execute('set disassembly-flavor intel')
 
 # User program entry
-gdb.execute('hb *0x100000')  # __start
+gdb.execute('b *0x100000')  # __start
 gdb.execute('continue')
-gdb.execute('b entry_64')  # main
+gdb.execute('b AllocPage')  # main

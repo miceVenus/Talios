@@ -2,7 +2,12 @@
 #include "gate.h"
 #include "trap.h"
 #include "memory.h"
+#include "lib.h"
 
+extern struct GlobalMemDescriptor MMS;
+void BRKP(){
+
+};
 void main(){
     PrintkInit();
     
@@ -14,11 +19,14 @@ void main(){
 
     SysVectorInit();
     InitMemory();
-    
-    ColorPrintfk(WHITE, BLACK, "This is a Test Line\n");
-    ColorPrintfk(WHITE, BLACK, "This is another Test Line %d \n", 1289);
-    ColorPrintfk(WHITE, BLACK, "This is another Test Line %X \n", 12313522222222);
-    ColorPrintfk(WHITE, BLACK, "This is another Test Line %p \n", (void *)SetTss);
+
+    for(int i = 0; i < 64; i++){
+        struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 64, PG_Active);
+        if(p != NULL)
+        ColorPrintfk(BLUE, BLACK, "Alloc 64 Pages, In %p, BitMap1 %X, BitMap2 %X\n", p->PhyAddr, MMS.BitsMap[0], MMS.BitsMap[1]);
+        else
+        break;
+    }
 
     int i = 1/0;
     while (1) {}

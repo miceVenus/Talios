@@ -29,7 +29,7 @@ void DoInvalidTss(unsigned long rsp, unsigned long ErroCode){
 
     uint16_t Index               = ErroCode & 0xfff8;
     
-    ColorPrintfk(RED, BLACK, "do_invalid_tss(10) In RIP: %p, RSP: %p, ERRCODE: %X \n", \ 
+    ColorPrintfk(RED, BLACK, "do_invalid_tss(10) In RIP: %p, RSP: %p, ERRCODE: %X \n", \
         rip, rsp, ErroCode);
 
     if(ErroCode & 0x1){
@@ -55,7 +55,7 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     
-    ColorPrintfk(RED, BLACK, "do_pageFault(14) In RIP: %p, RSP: %p, ERRCODE: %X \n", \ 
+    ColorPrintfk(RED, BLACK, "do_pageFault(14) In RIP: %p, RSP: %p, ERRCODE: %X \n", \
         rip, rsp, ErroCode);
     
     if(ErroCode & 0x1){

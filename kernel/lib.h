@@ -14,6 +14,11 @@ typedef unsigned long size_t;
 typedef unsigned char uint8_t;
 #endif
 
+#ifndef NULL
+#define NULL (void *)0
+#endif
+
+
 #define sti()  __asm__ volatile("sti":::"memory")
 
 #define cli()  __asm__ volatile("cli":::"memory")
@@ -102,9 +107,10 @@ inline void memcopy(char *Src, char *Dst, size_t n){
     }
 }
 
-static inline void memset(char *Src, size_t n, char num){
-    char *Dst = Src + n;
-    while(Src < Dst) *(Src++) = num;
+static inline void memset(void *Src, char num, size_t n){
+    char *src = (char *)Src;
+    char *dst = src + n;
+    while(src < dst) *(src++) = num;
 }
 
 /// @brief Transfer A Num To A String Simply

@@ -8,6 +8,7 @@ extern char _text;
 extern char _etext;
 extern char _edata;
 extern char _end;
+
 unsigned long ZoneDmaIndex;
 unsigned long ZoneNormalIndex;
 unsigned long ZoneUnmapedIndex;
@@ -55,7 +56,7 @@ void InitMemory(){
     unsigned long TotalPage2M = 0;
 
     // Count Total Page
-    for(int i = 0; i < MMS.GMDLength; i++){
+    for(unsigned int i = 0; i < MMS.GMDLength; i++){
 
         if(MMS.descriptor[i].type != 1) continue;
 
@@ -94,7 +95,7 @@ void InitMemory(){
     MMS.ZonesLength = 5 * sizeof(struct Zone);
     memset(MMS.ZonesGroup, 0x00, MMS.ZonesLength);
 
-    for(int i = 0; i < MMS.GMDLength; i++){
+    for(unsigned int i = 0; i < MMS.GMDLength; i++){
         if(MMS.descriptor[i].type != 1)
         continue;
 
@@ -108,11 +109,12 @@ void InitMemory(){
         struct Zone * z = MMS.ZonesGroup + MMS.ZonesSize;
 
         z -> GMD           = &MMS;
+
         z -> Attribute     = 0;
 
         z -> PagesGroup    = MMS.PagesGroup + (StartAddr >> PAGE_2M_SHIFT);
-        z -> PageFreeCount = (StartAddr - EndAddr) >> PAGE_2M_SHIFT;
-        z -> PagesLength   = z -> PageFreeCount;
+        z -> PageFreeCount = (EndAddr - StartAddr) >> PAGE_2M_SHIFT;
+        z -> PagesSize   = z -> PageFreeCount;
         z -> PageUsingCount= 0;
         z -> TotalPagesLink= 0;
 
@@ -122,14 +124,14 @@ void InitMemory(){
 
         MMS.ZonesSize++;
 
-        for(int j = 0; StartAddr < EndAddr; StartAddr += PAGE_2M_SIZE, j++){
-            struct Page * p = MMS.PagesGroup + j;
-            MMS.BitsMap[BITS_MAP_INDEX(StartAddr)] ^= BITS_MAP_OFFSET(StartAddr);
+        for(unsigned long CurrentAddr = StartAddr; CurrentAddr < EndAddr; CurrentAddr += PAGE_2M_SIZE){
+            struct Page * p = MMS.PagesGroup + (CurrentAddr >> PAGE_2M_SHIFT);
+            MMS.BitsMap[BITS_MAP_INDEX(CurrentAddr)] ^= BITS_MAP_BIT_PATTERN(CurrentAddr);
 
             // Init PagesGroup
             p -> age           = 0;
             p -> Attribute     = 0;
-            p -> PhyAddr       = StartAddr;
+            p -> PhyAddr       = CurrentAddr;
             p -> RefCount      = 0;
             p -> ZoneStruct    = z;
         }
@@ -151,8 +153,9 @@ void InitMemory(){
 
     ZoneDmaIndex    = 0;
     ZoneNormalIndex = 0;
+    ZoneUnmapedIndex= 0;
 
-    for(int i = 0; i < MMS.ZonesSize; i++){
+    for(unsigned long i = 0; i < MMS.ZonesSize; i++){
         struct Zone * z = MMS.ZonesGroup + i;
         if(z -> ZoneStartAddr == 0x100000000){
             ZoneUnmapedIndex = i;
@@ -165,7 +168,7 @@ void InitMemory(){
 
     Temp =  VIRT_TO_PHY(PAGE_4K_ALIGN_UP(MMS.EndStruct)) >> PAGE_2M_SHIFT;
 
-    for(int i = 0; i < Temp; i++){
+    for(unsigned int i = 0; i < Temp; i++){
         PageInit(MMS.PagesGroup + i, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_Kernel_Init) | PATTR(PG_PTable_Maped));
     }
 
@@ -182,7 +185,7 @@ void InitMemory(){
 
 void PageInit(struct Page *p, unsigned long flag){
     if(!p -> Attribute){
-        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_OFFSET(p->PhyAddr);
+        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_BIT_PATTERN(p->PhyAddr);
         p -> RefCount++;
         p -> Attribute = flag;
         p -> ZoneStruct -> PageFreeCount--;
@@ -199,7 +202,85 @@ void PageInit(struct Page *p, unsigned long flag){
     }
     else
     {
-        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_OFFSET(p->PhyAddr);
+        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_BIT_PATTERN(p->PhyAddr);
         p -> Attribute |= flag;
     }
+}
+
+/// @brief ugly but useful
+/// @param ZoneSelector An Enum Type Defined In memory.h To Control The Type Of Memory
+/// @param number   0 < Number <= 64
+/// @param PageAttr An Enum Type Defined In memory.h To Describe Page 
+/// @return Alloced Memory Start
+struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
+    
+    if(number <= 0 || number > 64) return NULL;
+
+    struct Zone *z;
+    struct Page *p;
+    unsigned long value;
+    unsigned long ZoneStart, ZoneEnd;
+    unsigned long pattern = number == 64 ? 0xffffffffffffffffUL : ~((1UL << (BITS_PER_LONG - number)) - 1);
+    unsigned long PatternBak = pattern;
+    unsigned long i, j, k, l, tmp;
+
+    switch (ZoneSelector){
+        case ZONE_DMA_INDEX:
+            ZoneStart   = 0;
+            ZoneEnd     = ZoneDmaIndex; 
+            goto LABEL_HANDLE;
+
+        case ZONE_NORMAL_INDEX:
+            ZoneStart   = ZoneDmaIndex;
+            ZoneEnd     = ZoneNormalIndex;
+            goto LABEL_HANDLE;
+
+        case ZONE_UNMAPED_INDEX:
+            ZoneStart   = ZoneUnmapedIndex;
+            ZoneEnd     = MMS.ZonesSize - 1;
+            goto LABEL_HANDLE;
+        
+        default:
+            ColorPrintfk(YELLOW, BLACK, "Unknown ZoneSelector");
+            return NULL;
+
+    LABEL_HANDLE:
+        // apparentlly Bug exist
+        for(i = ZoneStart; i <= ZoneEnd; i++){
+            z = MMS.ZonesGroup + i;
+
+            if(z -> PageFreeCount < (unsigned)number){
+                ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Index %D Which Type Is %d\n", i, ZoneSelector);
+                continue;
+            }
+
+            tmp = BITS_PER_LONG - BITS_MAP_BIT_OFFSET(z -> ZoneStartAddr);
+
+            for(j = PAGE_2M_INDEX(z->ZoneStartAddr); j < PAGE_2M_INDEX(z->ZoneEndAddr); j += j % BITS_PER_LONG ? BITS_PER_LONG : tmp){
+
+                // ColorPrintfk(YELLOW, BLACK, "%d, %p, %p\n", j, p -> PhyAddr, p);
+                p = MMS.PagesGroup + j;
+                unsigned long index = BITS_MAP_INDEX(p -> PhyAddr);
+                value = MMS.BitsMap[index];
+
+                // HERE To Handle The UnAligned
+                if(index < (MMS.BitsMapLength >> 3)){
+                    value <<= BITS_PER_LONG - tmp;
+                    value +=  (MMS.BitsMap[index + 1] & (~((1UL << tmp) - 1))) >> tmp;
+                }
+
+                for(k = 0; k <= BITS_PER_LONG - number; k++){
+                    if(!(value & pattern)){
+                        for(l = 0; l < (unsigned)number; l++) PageInit(p + k + l, PageAttr);
+                        return p + k;
+                    }
+                    pattern >>= 1;
+                }
+
+                pattern = PatternBak;
+            }
+        }
+    }
+    ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Type Is %d May Be There Is No More Space \n", ZoneSelector);
+    return NULL;
 }

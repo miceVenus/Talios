@@ -18,25 +18,26 @@
 #define PAGE_2M_MASK    (~ (PAGE_2M_SIZE - 1))
 #define PAGE_4K_MASK    (~ (PAGE_4K_SIZE - 1))
 
-#define PAGE_2M_ALIGN_DOWN(addr) ((unsigned long)addr & PAGE_2M_MASK)
-#define PAGE_4K_ALIGN_DOWN(addr) ((unsigned long)addr & PAGE_4K_MASK)
-#define PAGE_2M_ALIGN_UP(addr) (((unsigned long)addr + PAGE_2M_SIZE - 1) & PAGE_2M_MASK)
-#define PAGE_4K_ALIGN_UP(addr) (((unsigned long)addr + PAGE_4K_SIZE - 1) & PAGE_4K_MASK)
+#define PAGE_2M_ALIGN_DOWN(addr) ((unsigned long)(addr) & PAGE_2M_MASK)
+#define PAGE_4K_ALIGN_DOWN(addr) ((unsigned long)(addr) & PAGE_4K_MASK)
+#define PAGE_2M_ALIGN_UP(addr) (((unsigned long)(addr) + PAGE_2M_SIZE - 1) & PAGE_2M_MASK)
+#define PAGE_4K_ALIGN_UP(addr) (((unsigned long)(addr) + PAGE_4K_SIZE - 1) & PAGE_4K_MASK)
 
-#define VIRT_TO_PHY(addr)   ((unsigned long)addr - PAGE_OFFSET)
-#define PHY_TO_VIRT(addr)   ((unsigned long *)((unsigned long)addr + PAGE_OFFSET))
+#define VIRT_TO_PHY(addr)   ((unsigned long)(addr) - PAGE_OFFSET)
+#define PHY_TO_VIRT(addr)   ((unsigned long *)((unsigned long)(addr) + PAGE_OFFSET))
 
-#define PAGE_2M_INDEX(Paddr)             (Paddr >> PAGE_2M_SHIFT)
-#define BITS_MAP_INDEX(Paddr)            (PAGE_2M_INDEX(Paddr) >> BITS_PER_LONG)
+#define PAGE_2M_INDEX(Paddr)             ((Paddr) >> PAGE_2M_SHIFT)
+#define BITS_MAP_INDEX(Paddr)            (PAGE_2M_INDEX(Paddr) >> 6)
 #define BITS_MAP_BIT_OFFSET(Paddr)       (PAGE_2M_INDEX(Paddr) % BITS_PER_LONG)
-#define BITS_MAP_OFFSET(Paddr)           (1UL << BITS_MAP_BIT_OFFSET(Paddr))
+#define BITS_MAP_BIT_PATTERN(Paddr)      (1UL << (BITS_PER_LONG - 1 - BITS_MAP_BIT_OFFSET(Paddr)))
 
 #define BITS_PER_LONG     ((sizeof(long) << 3))
 
-// Set a Small Mem Gap
-#define MEM_GAP_ALIGN(addr)  (((unsigned long)addr + (sizeof(long) << 5)) & (~(sizeof(long) - 1)))
 
-#define PATTR(attr)     (1UL << attr)
+// Set a Small Mem Gap
+#define MEM_GAP_ALIGN(addr)  (((unsigned long)(addr) + (sizeof(long) << 5)) & (~(sizeof(long) - 1)))
+
+#define PATTR(attr)     (1UL << (attr))
 
 
 enum PageAttribute{
@@ -46,6 +47,12 @@ enum PageAttribute{
     PG_Kernel           ,
     PG_Referenced       ,
     PG_K_Share_To_U
+};
+
+enum ZONE_INDEX{
+    ZONE_NORMAL_INDEX = 0   ,
+    ZONE_UNMAPED_INDEX      ,
+    ZONE_DMA_INDEX          ,
 };
 
 struct E820{
@@ -83,14 +90,14 @@ struct GlobalMemDescriptor{
 
 struct Zone{
     struct Page *   PagesGroup;
-    unsigned long   PagesLength;
+    unsigned long   PagesSize;
 
     unsigned long   ZoneStartAddr;
     unsigned long   ZoneEndAddr;
     unsigned long   ZoneLength;
     unsigned long   Attribute;
 
-    struct GlobalMemDesciptor * GMD;
+    struct GlobalMemDescriptor * GMD;
 
     unsigned long   PageUsingCount;
     unsigned long   PageFreeCount;
@@ -108,5 +115,6 @@ struct Page{
 
 void InitMemory();
 void PageInit(struct Page *p, unsigned long flag);
+struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr);
 
 #endif
