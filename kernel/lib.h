@@ -19,6 +19,10 @@ typedef unsigned char uint8_t;
 #endif
 
 
+#define STR(x) #x
+
+#define CONCAT(x1, x2) x1 ## x2
+
 #define sti()  __asm__ volatile("sti":::"memory")
 
 #define cli()  __asm__ volatile("cli":::"memory")
@@ -41,6 +45,7 @@ typedef unsigned char uint8_t;
         __asm__ volatile("divq %%rcx":"=a"(num), "=d"(__res):"0"(num), "1"(0), "c"(base)); \
         __res; })
 
+
 // ONLY IN GNU C !!!!!!
 #define SwitchMem(Ptr1, Ptr2) ({\
         typeof(*(Ptr1)) Temp; \
@@ -48,110 +53,36 @@ typedef unsigned char uint8_t;
         *Ptr1 = *Ptr2; \
         *Ptr2 = Temp; })
 
-#define STR(x) #x
-
-#define CONCAT(x1, x2) x1 ## x2
-
-static inline void StringCopy(char *Src, char *Dst){
-    char *Ptr = Src;
-    while(*Ptr != '\0') *(Dst++) = *(Ptr++);
-    *Dst = '\0';
+// must be num in ax and port in dx
+static inline void OUT8b(unsigned char port, unsigned char byte){
+    __asm__ volatile("outb %1, %%dx" : : "d"(port), "a"(byte): "memory");
 }
 
-static inline void StringNCopy(char *Src, char *Dst, size_t n){
-    char *Ptr = Src;
-    size_t Len = 0;
-    while(*Ptr != '\0' && Len < n){
-        *(Dst++) = *(Ptr++);
-        Len++;
-    }
-    Len < n ? *Dst = '\0' : 0;
+
+static inline unsigned char IN8b(unsigned char port){
+    unsigned char num;
+    __asm__ volatile("inb %%dx, %0" :"=a"(num): "d"(port): "memory");
+    return num;
 }
 
-static inline int StringLen(char *Str){
-    char *Ptr = Str;
-    while(*Ptr != '\0') Ptr++;
-    return Ptr - Str;
+static inline void OUT32b(unsigned char port, unsigned int num){
+    __asm__ volatile("outl %1, %%dx" : : "d"(port), "a"(num): "memory");
 }
 
-/// @brief Reverse a string simply;
-/// @param Str Target String
-/// @return Reversed String
-static char *StringReverse(char *Str){
-    int Length = StringLen(Str);
-    char *TailPtr = Length - 1 + Str;
-    char *HeadPtr = Str;
-    while(TailPtr != HeadPtr){
-        SwitchMem(HeadPtr, TailPtr);
-        HeadPtr++;
-        TailPtr--;
-    }
 
-    return Str;
+static inline unsigned int IN32b(unsigned char port){
+    unsigned int num;
+    __asm__ volatile("inl %%dx, %0" :"=a"(num): "d"(port): "memory");
+    return num;
 }
 
-inline void memcopy(char *Src, char *Dst, size_t n){
+void    memset(void *Src, char num, size_t n);
+void    memcopy(char *Src, char *Dst, size_t n);
 
-    short int IsBackcopy = 0;
-    uintptr_t SrcPtr = (uintptr_t)Src;
-    uintptr_t DstPtr = (uintptr_t)Dst;
-
-    IsBackcopy = (SrcPtr + n > DstPtr);
-
-    if(IsBackcopy){
-        Dst = Dst + n;
-        Src = Src + n;
-        while (n--) *(Dst--) = *(Src--);
-    }else{
-        while (n--) *(Dst++) = *(Src++);
-    }
-}
-
-static inline void memset(void *Src, char num, size_t n){
-    char *src = (char *)Src;
-    char *dst = src + n;
-    while(src < dst) *(src++) = num;
-}
-
-/// @brief Transfer A Num To A String Simply
-/// @param Buffer Because that we Can't use malloc for now
-/// @param Num Target Num
-/// @param base Max 36;
-/// @param Upper 
-/// @return Buffer Len;
-static int NumToString(char *Buffer, long Num, unsigned int base, int Upper){
-    int Res;
-    unsigned char IsMinus = Num < 0 && (base == 10) ? 1 : 0;
-    char *Ptr = Buffer;
-    char Character;
-    
-    if(!Num)
-        *(Ptr++) =  '0';
-        
-    while(Num){
-        Res = DoDiv(Num, base);
-        if(Res > 9) Character = Upper ? Res - 10 + 'A': Res - 10 + 'a';
-        else        Character = Res + '0';
-        *(Ptr++) =  Character;
-    }
-
-    if(IsMinus)     *(Ptr++) =  '-';
-    if(base == 16){
-        *(Ptr++) =  'x';
-        *(Ptr++) =  '0';
-    }
-
-    char *TailPtr = Ptr - 1;
-    char *HeadPtr = Buffer;
-    while(HeadPtr < TailPtr) {
-        SwitchMem(HeadPtr, TailPtr);
-        HeadPtr++;
-        TailPtr--;
-    }
-
-    *(Ptr++) =  '\0';
-
-    return Ptr - Buffer - 1;
-}
+int     StringLen(char *Str);
+char*   StringReverse(char *Str);
+void    StringCopy(char *Src, char *Dst);
+void    StringNCopy(char *Src, char *Dst, size_t n);
+int     NumToString(char *Buffer, long Num, unsigned int base, int Upper);
 
 #endif

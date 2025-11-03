@@ -91,8 +91,8 @@ setup_TSS64:
 	shrq	$32,	    %rdx
 	movq	%rdx,	    72(%rdi)
 
-	; mov	$0x40,	%ax
-	; ltr	%ax
+	# mov	$0x40,	%ax
+	# ltr	%ax
     
     movq    $0xffff800000007E00,    %rsp  # Set stack pointer
 

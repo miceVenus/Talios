@@ -7,7 +7,7 @@
 
 
 void SysVectorInit(){
-    SetTrapGate(0,  1,  divide_error);
+    SetTrapGate(0,  1, divide_error);
     SetTrapGate(10, 1, invalid_TSS);
     SetTrapGate(14, 1, page_fault);
     // sti();
@@ -95,6 +95,6 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 
 void DoNmi(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
-    ColorPrintfk(0xFF0000, 0x0000, "Bad Division In RIP: %p, RSP: %p, ERRCODE: %X", rip, rsp, ErroCode);
+    ColorPrintfk(0xFF0000, 0x0000, "Bad Division In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
     while(1);
 }

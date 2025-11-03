@@ -61,7 +61,7 @@ struct E820{
     unsigned int  type;
 }__attribute__((packed));
 
-struct GlobalMemDescriptor{
+struct GlobalMemManager{
     struct E820 descriptor[MAX_GMD_LEN];
     unsigned int GMDLength;
 
@@ -97,7 +97,7 @@ struct Zone{
     unsigned long   ZoneLength;
     unsigned long   Attribute;
 
-    struct GlobalMemDescriptor * GMD;
+    struct GlobalMemManager * GMM;
 
     unsigned long   PageUsingCount;
     unsigned long   PageFreeCount;

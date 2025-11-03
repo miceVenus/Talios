@@ -2,7 +2,7 @@
 #include "printk.h"
 #include "lib.h"
 
-struct GlobalMemDescriptor MMS;
+struct GlobalMemManager MMS;
 
 extern char _text;
 extern char _etext;
@@ -15,7 +15,7 @@ unsigned long ZoneUnmapedIndex;
 
 void InitMemory(){
 
-    MMS = (struct GlobalMemDescriptor){
+    MMS = (struct GlobalMemManager){
         .descriptor = {0},
         .GMDLength  =  0
     };
@@ -108,7 +108,7 @@ void InitMemory(){
 
         struct Zone * z = MMS.ZonesGroup + MMS.ZonesSize;
 
-        z -> GMD           = &MMS;
+        z -> GMM           = &MMS;
 
         z -> Attribute     = 0;
 
@@ -178,7 +178,7 @@ void InitMemory(){
 
     ColorPrintfk(BLUE, BLACK, "CR3 : %X ; PML4E : %X ; PDPTE : %X ; \n", CR3, *PHY_TO_VIRT(CR3), \
                                                                         *PHY_TO_VIRT(*(PHY_TO_VIRT(CR3)) & (~0xff)));
-    *PHY_TO_VIRT(CR3 & (~0xff)) = 0;
+    *PHY_TO_VIRT(CR3 & (~0xfffUL)) = 0;
 
     FlushTLB();
 }
