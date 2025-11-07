@@ -15,7 +15,7 @@ typedef unsigned char uint8_t;
 #endif
 
 #ifndef NULL
-#define NULL (void *)0
+#define NULL 0UL
 #endif
 
 
@@ -77,7 +77,7 @@ static inline unsigned int IN32b(unsigned char port){
 }
 
 void    memset(void *Src, char num, size_t n);
-void    memcopy(char *Src, char *Dst, size_t n);
+void    memcopy(void *Src, void *Dst, size_t n);
 
 int     StringLen(char *Str);
 char*   StringReverse(char *Str);

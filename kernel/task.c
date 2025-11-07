@@ -1,0 +1,195 @@
+#include "task.h"
+#include "gate.h"
+#include "printk.h"
+#include "lib.h"
+#include "memory.h"
+
+struct LocalMemManager InitLmm;
+struct ThreadStruct InitThread;
+
+union TaskUnion InitTaskUnion __attribute__((__section__ (".data.init_task"))) = {INIT_TASK(InitTaskUnion.task)};
+
+struct LocalMemManager InitLmm = {0};
+
+struct ThreadStruct InitThread = {
+    .rsp0   =   (unsigned long)(InitTaskUnion.stack + STACK_SIZE / sizeof(unsigned long)),
+    .rsp    =   (unsigned long)(InitTaskUnion.stack + STACK_SIZE / sizeof(unsigned long)),
+    .fs     =   KERNEL_DS,
+    .gs     =   KERNEL_DS,
+    .cr2    =   0,
+    .TrapNum    =   0,
+    .ErrorCode  =   0
+};
+
+struct TaskStruct* InitTask[NR_CPUS] = {&InitTaskUnion.task, 0};
+
+struct TssStruct InitTss[NR_CPUS] = {[0 ... NR_CPUS - 1] = INIT_TSS};
+
+__asm__ (   
+            ".global KernelThreadFunc      \n\t"
+            "KernelThreadFunc:     \n\t"
+            "   popq    %r15       \n\t"
+            "   popq    %r14       \n\t"
+            "   popq    %r13       \n\t"
+            "   popq    %r12       \n\t"
+            "   popq    %r11       \n\t"
+            "   popq    %r10       \n\t"
+            "   popq    %r9        \n\t"
+            "   popq    %r8        \n\t"
+            "   popq    %rbx       \n\t"
+            "   popq    %rcx       \n\t"
+            "   popq    %rdx       \n\t"
+            "   popq    %rsi       \n\t"
+            "   popq    %rdi       \n\t"
+            "   popq    %rbp       \n\t"
+            "   popq    %rax       \n\t"
+            "   movq    %rax,   %ds       \n\t"
+            "   popq    %rax       \n\t"
+            "   movq    %rax,   %es       \n\t"
+            "   popq    %rax       \n\t"
+            "   addq    $0x38,  %rsp       \n\t"
+            "   movq    %rdx,   %rdi       \n\t"
+            "   callq   *%rbx       \n\t"
+            "   movq    %rax,   %rdi       \n\t"
+            "   callq   DoExit      \n\t");
+
+inline void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
+    InitTss[0].rsp0 = next -> thread -> rsp0;
+    SetTss( InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+            InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
+            InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
+            InitTss[0].ist7);
+    __asm__ volatile("movq %%fs,    %0" :"=r"(prev->thread->fs));
+    __asm__ volatile("movq %%gs,    %0" :"=r"(prev->thread->gs));
+
+    __asm__ volatile("movq %0,      %%fs":: "r"(next->thread->fs));
+    __asm__ volatile("movq %0,      %%gs":: "r"(next->thread->gs));
+
+    ColorPrintfk(BLUE, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
+    ColorPrintfk(BLUE, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
+}
+
+unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long args, unsigned long flag){
+    struct PtRegs regs;
+    memset(&regs, 0, sizeof(regs));
+
+    regs.rbx = (unsigned long)Func;
+    regs.rdx = (unsigned long)args;
+
+    regs.ds  = KERNEL_DS;
+    regs.es  = KERNEL_DS;
+    regs.ss  = KERNEL_DS;
+
+    regs.cs     = KERNEL_CS;
+    regs.rflag  = (1 << 9);
+    regs.rip    = (unsigned long)KernelThreadFunc;
+    ColorPrintfk(BLUE, BLACK, "rip: %p\n", KernelThreadFunc);
+
+    return DoFork(&regs, flag, 0, 0);
+}
+
+inline struct TaskStruct * GetCurrent(){
+    struct TaskStruct* current = NULL;
+    __asm__ volatile("andq %%rsp, %0": "=r"(current): "0"(~32767UL));
+    return current;
+}
+
+inline void ListInit(struct List *list){
+    list->prev = NULL;
+    list->next = NULL;
+}
+
+inline void ListForeAdd(struct List *ForeList, struct List *list){
+    list->prev = ForeList;
+    ForeList->next = list;
+}
+
+inline struct List* ListNext(struct List *list){
+    return list->next;
+}
+
+unsigned long init(unsigned long arg){
+    ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
+    return 1;
+}
+/*
+Init After Memory
+*/
+void TaskInit(){
+
+    extern char _data;
+    extern char _rodata;
+    extern char _erodata;
+    extern struct GlobalMemManager MMS;
+    extern unsigned long _stack_start;
+
+    struct TaskStruct *p = NULL;
+
+    InitLmm.pgd         =   (pml4t_t *)GetCr3();
+    InitLmm.StartCode   =   MMS.StartCode;
+    InitLmm.EndCode     =   MMS.EndCode;
+    InitLmm.StartData   =   (unsigned long)(&_data);
+    InitLmm.EndData     =   MMS.EndData;
+    InitLmm.StartROData =   (unsigned long)(&_rodata);
+    InitLmm.EndROCode   =   (unsigned long)(&_erodata);
+    InitLmm.StartBrk    =   0;
+    InitLmm.EndBrk      =   MMS.EndBrk;
+    InitLmm.StartStack  =   _stack_start;
+
+    SetTss( InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+            InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
+            InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
+            InitTss[0].ist7);
+    
+    InitTss[0].rsp0 = InitThread.rsp0;
+
+    ListInit(&InitTaskUnion.task.list);
+
+    // Second Process
+    KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));
+
+    InitTaskUnion.task.state = TASK_RUNING;
+
+    p = ContainerOf(ListNext(&CURRENT->list), struct TaskStruct, list);
+
+    SWITCH_TO(CURRENT, p);
+}
+
+// Uncomplete Function
+unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize){
+    struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 1, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_PTable_Maped));
+
+    if(p == NULL) return 0;
+
+    struct TaskStruct *tsk = (struct TaskStruct *)PHY_TO_VIRT(p->PhyAddr);
+
+    memset(tsk, 0, sizeof(struct TaskStruct));
+
+    *tsk = *CURRENT;
+
+    ListInit(&tsk->list);
+    ListForeAdd(&(CURRENT->list), &tsk->list);
+    tsk->pid++;
+    tsk->state = TASK_UNINTERRPTABLE;
+
+    tsk->thread = (struct ThreadStruct*)(tsk + 1);
+    memcopy(regs, (void *)((unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs)), sizeof(struct PtRegs));
+
+    tsk->thread->rsp    = (unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs);
+    tsk->thread->rip    = regs->rip;
+    tsk->thread->rsp0   = (unsigned long)tsk + STACK_SIZE;
+
+    if(!(tsk->flags & PF_KTHREAD))
+        tsk->thread->rip = regs->rip = (unsigned long)ret_from_intr;
+    
+    tsk->state = TASK_RUNING;
+
+    return 1;
+}
+
+unsigned long DoExit(unsigned long code){
+    ColorPrintfk(BLUE, BLACK, "init return as %D\n", code);
+    while (1){
+
+    }
+}

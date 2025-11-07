@@ -1,3 +1,5 @@
+#include "linkage.h"
+
 .text 
 
 .global     __start
@@ -94,7 +96,7 @@ setup_TSS64:
 	# mov	$0x40,	%ax
 	# ltr	%ax
     
-    movq    $0xffff800000007E00,    %rsp  # Set stack pointer
+    movq    _stack_start(%rip),    %rsp  # Set stack pointer
 
     movq    go_to_kernel(%rip), %rax
     pushq   $0x8
@@ -103,10 +105,6 @@ setup_TSS64:
 
 go_to_kernel:
     .quad  main
-
-
-
-
 
 ignore_IDT:
     cld
@@ -254,5 +252,9 @@ TssTable:
 
 .set TssLen,     . - TssTable
 
+ENTRY(_stack_start)
+    .quad   InitTaskUnion + 32768
+
+    
 ignore_msg: 
     .asciz  "Not Implemented Exception Or Interrupt!!!! I'm Gone PLZ \n"

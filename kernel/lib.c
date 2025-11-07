@@ -56,20 +56,23 @@ void memset(void *Src, char num, size_t n){
 /*
 
 */
-void memcopy(char *Src, char *Dst, size_t n){
+void memcopy(void *Src, void *Dst, size_t n){
+
+    char *src = (char *)Src;
+    char *dst = (char *)Dst;
 
     short int IsBackcopy = 0;
-    uintptr_t SrcPtr = (uintptr_t)Src;
-    uintptr_t DstPtr = (uintptr_t)Dst;
+    uintptr_t SrcPtr = (uintptr_t)src;
+    uintptr_t DstPtr = (uintptr_t)dst;
 
     IsBackcopy = (SrcPtr + n > DstPtr);
 
     if(IsBackcopy){
-        Dst = Dst + n;
-        Src = Src + n;
-        while (n--) *(Dst--) = *(Src--);
+        dst = dst + n;
+        src = src + n;
+        while (n--) *(dst--) = *(src--);
     }else{
-        while (n--) *(Dst++) = *(Src++);
+        while (n--) *(dst++) = *(src++);
     }
 }
 

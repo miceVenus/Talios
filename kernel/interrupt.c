@@ -35,7 +35,7 @@
     void IRQ_NAME(nr);                                  \
     __asm__ (   SYMBOL_NAME_STR(IRQ)#nr"_interrupt:"    \
                 "pushq  $0x00;"                         \
-                "leaq   DoIRQ(%rip), %rax;"             \  
+                "leaq   DoIRQ(%rip), %rax;"             \
                 "pushq  %rax;"                          \
                 SAVE_ALL_REGS                           \
                 "movq   %rsp,  %rdi;"                   \

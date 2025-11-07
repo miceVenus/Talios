@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "lib.h"
 #include "interrupt.h"
+#include "task.h"
 
 extern struct GlobalMemManager MMS;
 void BRKP(){
@@ -22,5 +23,6 @@ void main(){
     InitMemory();
 
     InterruptInit();
-    while (1) {}
+
+    TaskInit();
 }
