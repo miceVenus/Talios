@@ -13,7 +13,7 @@ void BRKP(){
 void main(){
     PrintkInit();
     
-    LTR(8);  // Check And Reloade TR
+    LTR(10);  // Check And Reloade TR
 
     SetTss( 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\

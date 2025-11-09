@@ -73,6 +73,38 @@ ENTRY(page_fault)
 
     jmp     error_code
 
+ENTRY(general_purpose)
+    pushq   %rax
+    leaq    DoGeneralPurpose(%rip),      %rax
+
+    xchgq   %rax,   (%rsp)
+
+    jmp     error_code
+
+ENTRY(double_fault)
+    pushq   %rax
+    leaq    DoDoubleFault(%rip),      %rax
+
+    xchgq   %rax,   (%rsp)
+
+    jmp     error_code
+
+ENTRY(alignment_check_fault)
+    pushq   %rax
+    leaq    DoAlignmentCheckFault(%rip),      %rax
+
+    xchgq   %rax,   (%rsp)
+
+    jmp     error_code
+
+ENTRY(undefined_opcode_fault)
+    pushq   $0 
+    pushq   %rax
+    leaq    DoUndefinedOpcodeFault(%rip),      %rax
+
+    xchgq   %rax,   (%rsp)
+
+    jmp     error_code
 
 error_code:
     pushq   %rax

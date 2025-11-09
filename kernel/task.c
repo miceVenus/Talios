@@ -69,25 +69,6 @@ inline void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     ColorPrintfk(BLUE, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
 }
 
-unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long args, unsigned long flag){
-    struct PtRegs regs;
-    memset(&regs, 0, sizeof(regs));
-
-    regs.rbx = (unsigned long)Func;
-    regs.rdx = (unsigned long)args;
-
-    regs.ds  = KERNEL_DS;
-    regs.es  = KERNEL_DS;
-    regs.ss  = KERNEL_DS;
-
-    regs.cs     = KERNEL_CS;
-    regs.rflag  = (1 << 9);
-    regs.rip    = (unsigned long)KernelThreadFunc;
-    ColorPrintfk(BLUE, BLACK, "rip: %p\n", KernelThreadFunc);
-
-    return DoFork(&regs, flag, 0, 0);
-}
-
 inline struct TaskStruct * GetCurrent(){
     struct TaskStruct* current = NULL;
     __asm__ volatile("andq %%rsp, %0": "=r"(current): "0"(~32767UL));
@@ -110,8 +91,98 @@ inline struct List* ListNext(struct List *list){
 
 unsigned long init(unsigned long arg){
     ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
+
+    struct PtRegs* regs;
+
+    CURRENT->thread->rip = (unsigned long)ret_system_call;
+    CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
+
+    regs = CURRENT->thread->rsp;
+
+    __asm__ volatile(   "movq   %1, %%rsp       \n\t"
+                        "pushq  %2              \n\t"
+                        "jmp    DoExecve        \n\t"
+                    ::"D"(regs), "r"(CURRENT->thread->rsp), "r"(CURRENT->thread->rip));
     return 1;
 }
+
+void UserLevelFunc(){
+    // Can` t Be Called
+    // ColorPrintfk(BLUE, BLACK, "In User Level\n");
+    while(1){
+
+    };
+}
+
+unsigned long DoExecve(struct PtRegs* regs){
+    regs->rdx   = 0x800000;   // RIP
+    regs->rcx   = 0xa00000;   // RSP
+    regs->rax   = 1;
+    regs->es    = 0;
+    regs->ds    = 0;
+    ColorPrintfk(BLUE, BLACK, "execve is running\n");
+    memcopy(UserLevelFunc, (void *)0x800000, 1024);
+    return 0;
+}
+
+unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long args, unsigned long flag){
+    struct PtRegs regs;
+    memset(&regs, 0, sizeof(regs));
+
+    regs.rbx = (unsigned long)Func;
+    regs.rdx = (unsigned long)args;
+
+    regs.ds  = KERNEL_DS;
+    regs.es  = KERNEL_DS;
+    regs.ss  = KERNEL_DS;
+
+    regs.cs     = KERNEL_CS;
+    regs.rflag  = (1 << 9);
+    regs.rip    = (unsigned long)KernelThreadFunc;
+    ColorPrintfk(BLUE, BLACK, "rip: %p\n", KernelThreadFunc);
+
+    return DoFork(&regs, flag, 0, 0);
+}
+
+// Uncomplete Function
+unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize){
+    struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 1, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_PTable_Maped));
+
+    if(p == NULL) return 0;
+
+    struct TaskStruct *tsk = (struct TaskStruct *)PHY_TO_VIRT(p->PhyAddr);
+
+    memset(tsk, 0, sizeof(struct TaskStruct));
+
+    *tsk = *CURRENT;
+
+    ListInit(&tsk->list);
+    ListForeAdd(&(CURRENT->list), &tsk->list);
+    tsk->pid++;
+    tsk->state = TASK_UNINTERRPTABLE;
+
+    tsk->thread = (struct ThreadStruct*)(tsk + 1);
+    memcopy(regs, (void *)((unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs)), sizeof(struct PtRegs));
+
+    tsk->thread->rsp    = (unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs);
+    tsk->thread->rip    = regs->rip;
+    tsk->thread->rsp0   = (unsigned long)tsk + STACK_SIZE;
+
+    if(!(tsk->flags & PF_KTHREAD))
+        tsk->thread->rip = regs->rip = (unsigned long)ret_system_call;
+    
+    tsk->state = TASK_RUNING;
+
+    return 1;
+}
+
+unsigned long DoExit(unsigned long code){
+    ColorPrintfk(BLUE, BLACK, "init return as %D\n", code);
+    while (1){
+
+    }
+}
+
 /*
 Init After Memory
 */
@@ -145,7 +216,9 @@ void TaskInit(){
 
     ListInit(&InitTaskUnion.task.list);
 
-    // Second Process
+    wrmsr(0x174, KERNEL_CS);
+
+    // Second Process Should Be User State
     KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));
 
     InitTaskUnion.task.state = TASK_RUNING;
@@ -153,43 +226,4 @@ void TaskInit(){
     p = ContainerOf(ListNext(&CURRENT->list), struct TaskStruct, list);
 
     SWITCH_TO(CURRENT, p);
-}
-
-// Uncomplete Function
-unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize){
-    struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 1, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_PTable_Maped));
-
-    if(p == NULL) return 0;
-
-    struct TaskStruct *tsk = (struct TaskStruct *)PHY_TO_VIRT(p->PhyAddr);
-
-    memset(tsk, 0, sizeof(struct TaskStruct));
-
-    *tsk = *CURRENT;
-
-    ListInit(&tsk->list);
-    ListForeAdd(&(CURRENT->list), &tsk->list);
-    tsk->pid++;
-    tsk->state = TASK_UNINTERRPTABLE;
-
-    tsk->thread = (struct ThreadStruct*)(tsk + 1);
-    memcopy(regs, (void *)((unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs)), sizeof(struct PtRegs));
-
-    tsk->thread->rsp    = (unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs);
-    tsk->thread->rip    = regs->rip;
-    tsk->thread->rsp0   = (unsigned long)tsk + STACK_SIZE;
-
-    if(!(tsk->flags & PF_KTHREAD))
-        tsk->thread->rip = regs->rip = (unsigned long)ret_from_intr;
-    
-    tsk->state = TASK_RUNING;
-
-    return 1;
-}
-
-unsigned long DoExit(unsigned long code){
-    ColorPrintfk(BLUE, BLACK, "init return as %D\n", code);
-    while (1){
-
-    }
 }

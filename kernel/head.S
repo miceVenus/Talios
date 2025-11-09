@@ -89,11 +89,11 @@ setup_TSS64:
 	addq	%rcx,	    %rax
 	addq	$103,	    %rax
 	leaq	GdtTable(%rip),	    %rdi
-	movq	%rax,	    64(%rdi)
+	movq	%rax,	    80(%rdi)
 	shrq	$32,	    %rdx
-	movq	%rdx,	    72(%rdi)
+	movq	%rdx,	    88(%rdi)
 
-	# mov	$0x40,	%ax
+	# mov	$0x50,	%ax
 	# ltr	%ax
     
     movq    _stack_start(%rip),    %rsp  # Set stack pointer
@@ -164,26 +164,26 @@ __PML4E:
 
 __PDPTE:
 
-    .quad   0x103003
+    .quad   0x103007
     .fill   511,     8,  0
 
 .org    0x3000
 
 __PDE:
 
-    .quad   0x000083
-    .quad   0x200083
-    .quad   0x400083
-    .quad   0x600083
-    .quad   0x800083
-    .quad   0xe0000083 # 0xa00000  offset = 0x101 PDE[5] framebuffer start 0xfd000000
-    .quad   0xe0200083
-    .quad   0xe0400083
-    .quad   0xe0600083 # 0x1000000 offset = 0x1000 PDE[8]
-    .quad   0xe0800083
-    .quad   0xe0a00083
-    .quad   0xe0c00083
-    .quad   0xe0e00083
+    .quad   0x000087
+    .quad   0x200087
+    .quad   0x400087
+    .quad   0x600087
+    .quad   0x800087
+    .quad   0xe0000087 # 0xa00000  offset = 0x101 PDE[5] framebuffer start 0xfd000000
+    .quad   0xe0200087
+    .quad   0xe0400087
+    .quad   0xe0600087 # 0x1000000 offset = 0x1000 PDE[8]
+    .quad   0xe0800087
+    .quad   0xe0a00087
+    .quad   0xe0c00087
+    .quad   0xe0e00087
     .fill   499,     8,  0
 
 
@@ -203,13 +203,16 @@ GdtPtr:
 .align 8
 GdtTable:    
     .quad   0x0000000000000000  # NULL Offset 0
-    .quad   0x0020980000000000  # Kernel Code Segment Offset 0x8 Would Be Changed After Access
-    .quad   0x0000920000000000  # Kernel Data Segment Offset 0x10
-    .quad   0x0020f80000000000  # User Code Segment Offset 0x18
-    .quad   0x0000f20000000000  # User Data Segment Offset 0x20
-    .quad   0x00cf9a000000ffff  # Kernel Code Segment 32-bit Offset 0x28
-    .quad   0x00cf92000000ffff  # Kernel Data Segment 32-bit Offset 0x30
-    .fill   10, 8, 0             # TSS Offset 0x40 jump 0x7
+    .quad   0x0020980000000000  # Kernel Code Segment Offset 0x8 Would Be Changed After Access  64
+    .quad   0x0000920000000000  # Kernel Data Segment Offset 0x10                               64
+    .quad   0x0000000000000000  # User Code Segment Offset  0x18                                32
+    .quad   0x0000000000000000  # User Data Segment Offset  0x20                                32
+    .quad   0x0020f80000000000  # User Code Segment Offset 0x28                                 64
+    .quad   0x0000f20000000000  # User Data Segment Offset 0x30                                 64
+    .quad   0x00cf9a000000ffff  # Kernel Code Segment 32-bit Offset 0x38                        32
+    .quad   0x00cf92000000ffff  # Kernel Data Segment 32-bit Offset 0x40                        32
+
+    .fill   10, 8, 0            # TSS Offset 0x50   jmp 0x9
 
 
 .set GdtLen,    . - GdtTable

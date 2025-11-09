@@ -200,6 +200,7 @@ unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lon
 void TaskInit();
 
 void    ret_from_intr(void);
+void    ret_system_call(void);
 void    KernelThreadFunc(void);
 void    ListInit(struct List *list);
 struct  TaskStruct * GetCurrent();

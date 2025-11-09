@@ -10,6 +10,10 @@ void SysVectorInit(){
     SetTrapGate(0,  1, divide_error);
     SetTrapGate(10, 1, invalid_TSS);
     SetTrapGate(14, 1, page_fault);
+    SetTrapGate(13, 1, general_purpose);
+    SetTrapGate(8, 1, double_fault);
+    SetTrapGate(17, 1, alignment_check_fault);
+    SetTrapGate(6, 1, undefined_opcode_fault);
     // sti();
 }
 
@@ -71,9 +75,9 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
     }
 
     if(ErroCode & 0x4){
-        ColorPrintfk(RED, BLACK, "A Super User Occurs This Exception What a Pity \n");
-    }else{
         ColorPrintfk(RED, BLACK, "A Civilian Occurs This Exception \n");
+    }else{
+        ColorPrintfk(RED, BLACK, "A Super User Occurs This Exception What a Pity \n");
     }
 
     if(ErroCode & 0x8){
@@ -98,3 +102,30 @@ void DoNmi(unsigned long rsp, unsigned long ErroCode){
     ColorPrintfk(0xFF0000, 0x0000, "Bad Division In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
     while(1);
 }
+
+
+void DoGeneralPurpose(unsigned long rsp, unsigned long ErroCode){
+    uint64_t* rip = (uint64_t *)(rsp + 0x98);
+    ColorPrintfk(0xFF0000, 0x0000, "GPF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    while(1);
+}
+
+
+void DoDoubleFault(unsigned long rsp, unsigned long ErroCode){
+    uint64_t* rip = (uint64_t *)(rsp + 0x98);
+    ColorPrintfk(0xFF0000, 0x0000, "DF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    while(1);
+}
+
+void DoAlignmentCheckFault(unsigned long rsp, unsigned long ErroCode){
+    uint64_t* rip = (uint64_t *)(rsp + 0x98);
+    ColorPrintfk(0xFF0000, 0x0000, "ACF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    while(1);
+}
+
+void DoUndefinedOpcodeFault(unsigned long rsp, unsigned long ErroCode){
+    uint64_t* rip = (uint64_t *)(rsp + 0x98);
+    ColorPrintfk(0xFF0000, 0x0000, "UOF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    while(1);
+}
+

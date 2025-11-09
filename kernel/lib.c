@@ -65,11 +65,11 @@ void memcopy(void *Src, void *Dst, size_t n){
     uintptr_t SrcPtr = (uintptr_t)src;
     uintptr_t DstPtr = (uintptr_t)dst;
 
-    IsBackcopy = (SrcPtr + n > DstPtr);
+    IsBackcopy = (DstPtr > SrcPtr && DstPtr < SrcPtr + n);
 
     if(IsBackcopy){
-        dst = dst + n;
-        src = src + n;
+        dst = dst + n - 1;
+        src = src + n - 1;
         while (n--) *(dst--) = *(src--);
     }else{
         while (n--) *(dst++) = *(src++);

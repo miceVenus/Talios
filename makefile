@@ -17,7 +17,7 @@ CPFLAGS :=  -I elf64-x86-64 -S -R ".eh_frame" -R ".comment"
 # GCC also comes with additional freestanding headers for CPUID, SSE and such.
 CFLAGS 		:= 	-mcmodel=large -fno-builtin -m64 -ffreestanding -g -Wall -Wextra -MMD -MP -O0 -fvar-tracking
 
-LDFLAGS 	:=  -nostdlib -b elf64-x86-64
+LDFLAGS 	:=   -b elf64-x86-64 -z muldefs
 ASFLAGS 	:=  
 NASFLAGS	:= 
 
