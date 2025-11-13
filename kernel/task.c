@@ -4,6 +4,12 @@
 #include "lib.h"
 #include "memory.h"
 
+void    ListInit(struct List *list);
+struct  TaskStruct * GetCurrent();
+struct  List* ListNext(struct List *list);
+void    ListForeAdd(struct List *new, struct List *list);
+
+
 struct LocalMemManager InitLmm;
 struct ThreadStruct InitThread;
 
@@ -53,7 +59,7 @@ __asm__ (
             "   movq    %rax,   %rdi       \n\t"
             "   callq   DoExit      \n\t");
 
-inline void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
+void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     InitTss[0].rsp0 = next -> thread -> rsp0;
     SetTss( InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
             InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
@@ -69,25 +75,42 @@ inline void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     ColorPrintfk(BLUE, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
 }
 
-inline struct TaskStruct * GetCurrent(){
-    struct TaskStruct* current = NULL;
-    __asm__ volatile("andq %%rsp, %0": "=r"(current): "0"(~32767UL));
-    return current;
+
+/*          SYSCALL         */
+unsigned long NoSystemCall(struct PtRegs* regs){
+    ColorPrintfk(RED, BLACK, "There Is No System Call %D \n", regs->rax);
+    return -1;
 }
 
-inline void ListInit(struct List *list){
-    list->prev = NULL;
-    list->next = NULL;
+unsigned long SysPrint(struct PtRegs* regs){
+    ColorPrintfk(WHITE, BLACK, (char *)regs->rdi);
+    return 1;
 }
 
-inline void ListForeAdd(struct List *ForeList, struct List *list){
-    list->prev = ForeList;
-    ForeList->next = list;
+system_call_t SystemCallTable[MAX_SYS_CALL] = {
+    [0] = SysPrint,
+    [1 ... MAX_SYS_CALL - 1] = NoSystemCall,
+};
+
+unsigned long SystemCallFunc(struct PtRegs* regs){
+    return SystemCallTable[regs->rax](regs);
 }
 
-inline struct List* ListNext(struct List *list){
-    return list->next;
+
+void UserLevelFunc(){
+    // Can`t Be Called
+    // ColorPrintfk(BLUE, BLACK, "In User Level\n");
+    long ret = 0;
+    __asm__ volatile(   "leaq sysexit_return_address(%%rip),   %%rdx    \n\t"
+                        "movq   %%rsp,  %%rcx                           \n\t"
+                        "sysenter                                       \n\t"
+                        "sysexit_return_address:                        \n\t"
+                        :"=a"(ret):"0"(0):"memory");
+    while(1){
+
+    };
 }
+
 
 unsigned long init(unsigned long arg){
     ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
@@ -97,21 +120,13 @@ unsigned long init(unsigned long arg){
     CURRENT->thread->rip = (unsigned long)ret_system_call;
     CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
 
-    regs = CURRENT->thread->rsp;
+    regs = (struct PtRegs*)CURRENT->thread->rsp;
 
     __asm__ volatile(   "movq   %1, %%rsp       \n\t"
                         "pushq  %2              \n\t"
                         "jmp    DoExecve        \n\t"
                     ::"D"(regs), "r"(CURRENT->thread->rsp), "r"(CURRENT->thread->rip));
     return 1;
-}
-
-void UserLevelFunc(){
-    // Can` t Be Called
-    // ColorPrintfk(BLUE, BLACK, "In User Level\n");
-    while(1){
-
-    };
 }
 
 unsigned long DoExecve(struct PtRegs* regs){
@@ -217,6 +232,8 @@ void TaskInit(){
     ListInit(&InitTaskUnion.task.list);
 
     wrmsr(0x174, KERNEL_CS);
+    wrmsr(0x175, CURRENT->thread->rsp0);
+    wrmsr(0x176, (unsigned long)Syscall);
 
     // Second Process Should Be User State
     KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));

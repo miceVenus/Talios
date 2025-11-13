@@ -5,6 +5,7 @@
 #include "lib.h"
 #include "interrupt.h"
 #include "task.h"
+#include "cpu.h"
 
 extern struct GlobalMemManager MMS;
 void BRKP(){
@@ -20,9 +21,11 @@ void main(){
             0xffff800000007c00, 0xffff800000007c00);
 
     SysVectorInit();
-    InitMemory();
-
     InterruptInit();
+
+    CpuInit();
+
+    InitMemory();
 
     TaskInit();
 }

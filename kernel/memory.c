@@ -1,6 +1,16 @@
 #include "memory.h"
 #include "printk.h"
 #include "lib.h"
+#include "task.h"
+
+void ListInit(struct List *list);
+
+void ListForeAdd(struct List *new, struct List *list);
+void ListBackAdd(struct List *List, struct List *new);
+
+struct List* ListNext(struct List *list);
+
+int ListIsEmpty(struct List* list);
 
 struct GlobalMemManager MMS;
 
@@ -12,6 +22,234 @@ extern char _end;
 unsigned long ZoneDmaIndex;
 unsigned long ZoneNormalIndex;
 unsigned long ZoneUnmapedIndex;
+
+struct Slab* CreatSlab(unsigned long size, int ZoneSelector){
+    struct Slab* slab = (struct Slab*)kmalloc(sizeof(struct Slab));
+
+    if(!slab) return NULL;
+
+    memset(slab, 0, sizeof(struct Slab));
+
+    ListInit(&(slab->list));
+    slab->FreeCount     = PAGE_2M_SIZE / size;
+    slab->ColorLength   = ((slab->FreeCount + (1UL << 6) - 1) >> 6);
+    slab->ColorMap      = (unsigned long*)kmalloc(sizeof(unsigned long) * slab->ColorLength);
+
+    if(!(slab->ColorMap)) {free(slab); return NULL;}
+
+    memset(slab->ColorMap, 0, sizeof(unsigned long) * slab->ColorLength);
+
+    slab->page          = AllocPage(ZoneSelector, 1, PATTR(PG_Kernel));
+
+    if(!(slab->page)) {kfree(slab -> ColorMap); kfree(slab); return NULL;}
+
+    slab->Vaddress      = PHY_TO_VIRT(slab->page->PhyAddr);
+
+    return slab;
+}
+
+struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)(void *Vaddr, unsigned long arg), 
+                                    void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg){
+    struct SlabCache *SC= (struct SlabCache *)kmalloc(sizeof(struct SlabCache));
+    if(SC == NULL)  return NULL;
+
+    memset(SC, 0, sizeof(struct SlabCache));
+
+    unsigned long size = ALIGN_WITH_LONG(SlabSize);
+
+    SC -> Constructor   =   Constructor;
+    SC -> Destructor    =   Destructor;
+    SC -> TotalUse      =   0;
+
+    SC -> CachePool     =   CreatSlab(size, ZONE_NORMAL_INDEX);
+    if(!(SC -> CachePool)) {kfree(SC); return NULL;}
+
+    SC -> TotalFree     +=  SC->CachePool->FreeCount;
+    SC -> size          =   size;
+
+    SC -> CacheDmaPool  = NULL;
+
+    return SC;
+}
+
+int DeleteSlabCache(struct SlabCache *SC){
+    if(SC->TotalUse) return 0;
+    struct Slab* slab       = SC->CachePool;
+    struct Slab* tmp_slab   = NULL;
+    while(!ListIsEmpty(&slab->list)){
+        kfree(slab->ColorMap);
+        PageClean(slab->page);
+        PageFree(slab->page, 1);
+        tmp_slab = slab;
+        slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
+        kfree(tmp_slab);
+    }
+    kfree(slab->ColorMap);
+    PageClean(slab->page);
+    PageFree(slab->page, 1);
+    kfree(slab);
+    kfree(SC);
+    return 1;
+}
+
+void * AllocSlab(struct SlabCache *SC, unsigned long arg){
+
+    struct Slab *slab;
+    if(SC->TotalFree == 0){
+        slab = CreatSlab(SC->size, ZONE_NORMAL_INDEX);
+        if(slab == NULL) {ColorPrintfk(RED, BLACK, "CreatSlab Fail In AllocSlab"); return NULL;}
+        ListForeAdd(&slab->list, &SC->CachePool->list);
+        SC->TotalFree += slab->FreeCount;
+    }
+
+    slab = SC->CachePool;
+
+    do{
+        if(slab->FreeCount == 0){
+            slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
+            continue;
+        }else{
+            for(unsigned long i = 0; i < slab->ColorCount; i++){
+                if(*(slab->ColorMap + (i >> 6)) == 0xffffffffffffffff){
+                    i += 63;
+                    continue;
+                };
+                if(*(slab->ColorMap + (i >> 6)) & (1UL << i % 64) == 0){
+                    *(slab->ColorMap + (i >> 6)) |= (1UL << (i % 64));
+                    slab->FreeCount--;
+                    slab->UsingCount++;
+
+                    SC->TotalFree--;
+                    SC->TotalUse++;
+
+                    void *Vaddr = (void *)((unsigned long)slab->Vaddress + (i * SC->size));
+                    if(SC->Constructor != NULL) return SC->Constructor(Vaddr, arg);
+                    else return Vaddr;
+                }
+            }
+        }
+        slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
+    }while(slab != SC->CachePool);
+
+    ColorPrintfk(RED, BLACK, "There Is No Slap Could Be Alloc");
+    return NULL;
+}
+
+unsigned long FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
+
+    struct Slab *slab;
+
+    slab = SC->CachePool;
+    unsigned long index = 0;
+
+    do{
+        if(slab->Vaddress <= Vaddress && Vaddress - slab->Vaddress < PAGE_2M_SIZE){
+            index = (unsigned long)(Vaddress - slab->Vaddress) / SC->size;
+            *(slab->ColorMap + (index >> 6)) ^= (1UL << index % 64);
+            slab->FreeCount++;
+            slab->UsingCount--;
+
+            SC->TotalFree++;
+            SC->TotalUse--;
+
+            void *Vaddr = (void *)((unsigned long)slab->Vaddress + (index * SC->size));
+            if(SC->Destructor != NULL) SC->Destructor(Vaddr, arg);
+
+            if(slab->UsingCount == 0 && SC->TotalFree >= slab->ColorCount * 1.5){
+                SC->TotalFree -= slab->ColorCount;
+                kfree(slab->ColorMap);
+                PageClean(slab->page);
+                PageFree(slab->page, 1);
+                kfree(slab);
+            }
+            return 1;
+        }else{
+            slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
+        }
+    }while(slab != SC->CachePool);
+
+    ColorPrintfk(RED, BLACK, "Error In FreeSlab() Address Is Illegal\n");
+    return 0;
+}
+/// @brief ugly but useful
+/// @param ZoneSelector An Enum Type Defined In memory.h To Control The Type Of Memory
+/// @param number   0 < Number <= 64
+/// @param PageAttr An Enum Type Defined In memory.h To Describe Page 
+/// @return Alloced Memory Start
+struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
+    
+    if(number <= 0 || number > 64) return NULL;
+
+    struct Zone *z;
+    struct Page *p;
+    unsigned long value;
+    unsigned long ZoneStart, ZoneEnd;
+    unsigned long pattern = number == 64 ? 0xffffffffffffffffUL : ~((1UL << (BITS_PER_LONG - number)) - 1);
+    unsigned long PatternBak = pattern;
+    unsigned long i, j, k, l, tmp;
+
+    switch (ZoneSelector){
+        case ZONE_DMA_INDEX:
+            ZoneStart   = 0;
+            ZoneEnd     = ZoneDmaIndex; 
+            goto LABEL_HANDLE;
+
+        case ZONE_NORMAL_INDEX:
+            ZoneStart   = ZoneDmaIndex;
+            ZoneEnd     = ZoneNormalIndex;
+            goto LABEL_HANDLE;
+
+        case ZONE_UNMAPED_INDEX:
+            ZoneStart   = ZoneUnmapedIndex;
+            ZoneEnd     = MMS.ZonesCount - 1;
+            goto LABEL_HANDLE;
+        
+        default:
+            ColorPrintfk(YELLOW, BLACK, "Unknown ZoneSelector");
+            return NULL;
+
+    LABEL_HANDLE:
+        // apparentlly Bug exist
+        for(i = ZoneStart; i <= ZoneEnd; i++){
+            z = MMS.ZonesGroup + i;
+
+            if(z -> PageFreeCount < (unsigned)number){
+                ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Index %D Which Type Is %d\n", i, ZoneSelector);
+                continue;
+            }
+
+            tmp = BITS_PER_LONG - BITS_MAP_BIT_OFFSET(z -> ZoneStartAddr);
+
+            for(j = PAGE_2M_INDEX(z->ZoneStartAddr); j < PAGE_2M_INDEX(z->ZoneEndAddr); j += j % BITS_PER_LONG ? BITS_PER_LONG : tmp){
+
+                // ColorPrintfk(YELLOW, BLACK, "%d, %p, %p\n", j, p -> PhyAddr, p);
+                p = MMS.PagesGroup + j;
+                unsigned long index = BITS_MAP_INDEX(p -> PhyAddr);
+                value = MMS.BitsMap[index];
+
+                // HERE To Handle The UnAligned
+                if(index < (MMS.BitsMapLength >> 3)){
+                    value <<= BITS_PER_LONG - tmp;
+                    value +=  (MMS.BitsMap[index + 1] & (~((1UL << tmp) - 1))) >> tmp;
+                }
+
+                for(k = 0; k <= BITS_PER_LONG - number; k++){
+                    if(!(value & pattern)){
+                        for(l = 0; l < (unsigned)number; l++) PageInit(p + k + l, PageAttr);
+                        return p + k;
+                    }
+                    pattern >>= 1;
+                }
+
+                pattern = PatternBak;
+            }
+        }
+    }
+    ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Type Is %d May Be There Is No More Space \n", ZoneSelector);
+    return NULL;
+}
+
+
 
 void InitMemory(){
 
@@ -75,7 +313,7 @@ void InitMemory(){
     // Init BitsMap
 
     MMS.BitsMap = (unsigned long *)MEM_GAP_ALIGN(MMS.EndBrk);
-    MMS.BitsMapSize = TotalMemory >> PAGE_2M_SHIFT;
+    MMS.BitsMapCount = TotalMemory >> PAGE_2M_SHIFT;
 
     MMS.BitsMapLength = ((TotalMemory >> PAGE_2M_SHIFT) + 7) >> 3;
 
@@ -84,14 +322,14 @@ void InitMemory(){
     // Init PageGroup
 
     MMS.PagesGroup  = (struct Page*)MEM_GAP_ALIGN(((unsigned long)MMS.BitsMap + MMS.BitsMapLength));
-    MMS.PagesSize   = TotalMemory >> PAGE_2M_SHIFT;
+    MMS.PagesCount   = TotalMemory >> PAGE_2M_SHIFT;
     MMS.PagesLength = (TotalMemory >> PAGE_2M_SHIFT) * sizeof(struct Page);
     memset(MMS.PagesGroup, 0x00, MMS.PagesLength);
 
     // Init ZoneGroup
 
     MMS.ZonesGroup  = (struct Zone*)MEM_GAP_ALIGN((unsigned long)MMS.PagesGroup + MMS.PagesLength);
-    MMS.ZonesSize   = 0; // Assume Here
+    MMS.ZonesCount   = 0; // Assume Here
     MMS.ZonesLength = 5 * sizeof(struct Zone);
     memset(MMS.ZonesGroup, 0x00, MMS.ZonesLength);
 
@@ -106,7 +344,7 @@ void InitMemory(){
         continue;
 
 
-        struct Zone * z = MMS.ZonesGroup + MMS.ZonesSize;
+        struct Zone * z = MMS.ZonesGroup + MMS.ZonesCount;
 
         z -> GMM           = &MMS;
 
@@ -114,7 +352,7 @@ void InitMemory(){
 
         z -> PagesGroup    = MMS.PagesGroup + (StartAddr >> PAGE_2M_SHIFT);
         z -> PageFreeCount = (EndAddr - StartAddr) >> PAGE_2M_SHIFT;
-        z -> PagesSize   = z -> PageFreeCount;
+        z -> PagesCount    = z -> PageFreeCount;
         z -> PageUsingCount= 0;
         z -> TotalPagesLink= 0;
 
@@ -122,7 +360,7 @@ void InitMemory(){
         z -> ZoneStartAddr = StartAddr;
         z -> ZoneLength    = EndAddr - StartAddr;
 
-        MMS.ZonesSize++;
+        MMS.ZonesCount++;
 
         for(unsigned long CurrentAddr = StartAddr; CurrentAddr < EndAddr; CurrentAddr += PAGE_2M_SIZE){
             struct Page * p = MMS.PagesGroup + (CurrentAddr >> PAGE_2M_SHIFT);
@@ -138,16 +376,16 @@ void InitMemory(){
     }
     // !!!!!!!!!!!!!!!!!!!!!
 
-    MMS.ZonesLength = MMS.ZonesSize * sizeof(struct Zone);
+    MMS.ZonesLength = MMS.ZonesCount * sizeof(struct Zone);
 
     ColorPrintfk(BLUE, BLACK, "BitsMap bitsmap in : %p, bitsmap size : %D b, bitsmap length : %D B\n", 
-                                                    MMS.BitsMap, MMS.BitsMapSize, MMS.BitsMapLength);
+                                                    MMS.BitsMap, MMS.BitsMapCount, MMS.BitsMapLength);
 
     ColorPrintfk(BLUE, BLACK, "PageGroup pagegroup in : %p, pagegroup size : %D s, pagegroup length : %D B\n",
-                                                    MMS.PagesGroup, MMS.PagesSize, MMS.PagesLength);
+                                                    MMS.PagesGroup, MMS.PagesCount, MMS.PagesLength);
 
     ColorPrintfk(BLUE, BLACK, "ZoneGroup zonegroup in : %p, zonegroup size : %D s, zonegroup length : %D B\n",
-                                                    MMS.ZonesGroup, MMS.ZonesSize, MMS.ZonesLength);
+                                                    MMS.ZonesGroup, MMS.ZonesCount, MMS.ZonesLength);
     
     // Marked Zone Which Is the Unmapped
 
@@ -155,14 +393,15 @@ void InitMemory(){
     ZoneNormalIndex = 0;
     ZoneUnmapedIndex= 0;
 
-    for(unsigned long i = 0; i < MMS.ZonesSize; i++){
+    for(unsigned long i = 0; i < MMS.ZonesCount; i++){
         struct Zone * z = MMS.ZonesGroup + i;
+        // 4GB For Kernel
         if(z -> ZoneStartAddr == 0x100000000){
             ZoneUnmapedIndex = i;
         }
     }
 
-    MMS.EndStruct = (unsigned long)MEM_GAP_ALIGN((MMS.ZonesGroup + MMS.ZonesSize));
+    MMS.EndStruct = (unsigned long)MEM_GAP_ALIGN((MMS.ZonesGroup + MMS.ZonesCount));
 
     // Init Page Attribute Used In Kernel Init
 
@@ -205,82 +444,4 @@ void PageInit(struct Page *p, unsigned long flag){
         MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_BIT_PATTERN(p->PhyAddr);
         p -> Attribute |= flag;
     }
-}
-
-/// @brief ugly but useful
-/// @param ZoneSelector An Enum Type Defined In memory.h To Control The Type Of Memory
-/// @param number   0 < Number <= 64
-/// @param PageAttr An Enum Type Defined In memory.h To Describe Page 
-/// @return Alloced Memory Start
-struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
-    
-    if(number <= 0 || number > 64) return NULL;
-
-    struct Zone *z;
-    struct Page *p;
-    unsigned long value;
-    unsigned long ZoneStart, ZoneEnd;
-    unsigned long pattern = number == 64 ? 0xffffffffffffffffUL : ~((1UL << (BITS_PER_LONG - number)) - 1);
-    unsigned long PatternBak = pattern;
-    unsigned long i, j, k, l, tmp;
-
-    switch (ZoneSelector){
-        case ZONE_DMA_INDEX:
-            ZoneStart   = 0;
-            ZoneEnd     = ZoneDmaIndex; 
-            goto LABEL_HANDLE;
-
-        case ZONE_NORMAL_INDEX:
-            ZoneStart   = ZoneDmaIndex;
-            ZoneEnd     = ZoneNormalIndex;
-            goto LABEL_HANDLE;
-
-        case ZONE_UNMAPED_INDEX:
-            ZoneStart   = ZoneUnmapedIndex;
-            ZoneEnd     = MMS.ZonesSize - 1;
-            goto LABEL_HANDLE;
-        
-        default:
-            ColorPrintfk(YELLOW, BLACK, "Unknown ZoneSelector");
-            return NULL;
-
-    LABEL_HANDLE:
-        // apparentlly Bug exist
-        for(i = ZoneStart; i <= ZoneEnd; i++){
-            z = MMS.ZonesGroup + i;
-
-            if(z -> PageFreeCount < (unsigned)number){
-                ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Index %D Which Type Is %d\n", i, ZoneSelector);
-                continue;
-            }
-
-            tmp = BITS_PER_LONG - BITS_MAP_BIT_OFFSET(z -> ZoneStartAddr);
-
-            for(j = PAGE_2M_INDEX(z->ZoneStartAddr); j < PAGE_2M_INDEX(z->ZoneEndAddr); j += j % BITS_PER_LONG ? BITS_PER_LONG : tmp){
-
-                // ColorPrintfk(YELLOW, BLACK, "%d, %p, %p\n", j, p -> PhyAddr, p);
-                p = MMS.PagesGroup + j;
-                unsigned long index = BITS_MAP_INDEX(p -> PhyAddr);
-                value = MMS.BitsMap[index];
-
-                // HERE To Handle The UnAligned
-                if(index < (MMS.BitsMapLength >> 3)){
-                    value <<= BITS_PER_LONG - tmp;
-                    value +=  (MMS.BitsMap[index + 1] & (~((1UL << tmp) - 1))) >> tmp;
-                }
-
-                for(k = 0; k <= BITS_PER_LONG - number; k++){
-                    if(!(value & pattern)){
-                        for(l = 0; l < (unsigned)number; l++) PageInit(p + k + l, PageAttr);
-                        return p + k;
-                    }
-                    pattern >>= 1;
-                }
-
-                pattern = PatternBak;
-            }
-        }
-    }
-    ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Type Is %d May Be There Is No More Space \n", ZoneSelector);
-    return NULL;
 }

@@ -45,6 +45,7 @@ typedef unsigned char uint8_t;
         __asm__ volatile("divq %%rcx":"=a"(num), "=d"(__res):"0"(num), "1"(0), "c"(base)); \
         __res; })
 
+#define GetBits(num, pos, count) ((num) >> (pos) & ((1UL << (count)) - 1))
 
 // ONLY IN GNU C !!!!!!
 #define SwitchMem(Ptr1, Ptr2) ({\
@@ -52,6 +53,12 @@ typedef unsigned char uint8_t;
         Temp = *Ptr1; \
         *Ptr1 = *Ptr2; \
         *Ptr2 = Temp; })
+
+
+struct List{
+    struct List *prev;
+    struct List *next;
+};
 
 static inline void wrmsr(unsigned long addr, unsigned long content){
     __asm__ volatile("wrmsr "::"c"(addr), "d"(content >> 32), "a"(content & 0xffffffff));
@@ -88,6 +95,43 @@ static inline unsigned int IN32b(unsigned char port){
     __asm__ volatile("inl %%dx, %0" :"=a"(num): "d"(port): "memory");
     return num;
 }
+
+inline void ListInit(struct List *list){
+    list->prev = list;
+    list->next = list;
+}
+
+inline void ListForeAdd(struct List *new, struct List *list){
+
+    new->next = list;
+    new->prev = list->prev;
+    list->prev->next = new;
+    list->prev = new;
+
+}
+
+inline void ListBackAdd(struct List *list, struct List *new){
+    
+    new->prev = list;
+    new->next = list->next;
+    list->next->prev = new;
+    list->next = new;
+}
+
+inline struct List* ListNext(struct List *list){
+    return list->next;
+}
+
+inline struct List* ListPrev(struct List *list){
+    return list->prev;
+}
+
+inline int ListIsEmpty(struct List *list){
+    if(list -> next == list && list -> prev == list)
+        return 1;
+    return 0;
+}
+
 
 void    memset(void *Src, char num, size_t n);
 void    memcopy(void *Src, void *Dst, size_t n);

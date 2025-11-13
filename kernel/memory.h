@@ -37,6 +37,8 @@
 // Set a Small Mem Gap
 #define MEM_GAP_ALIGN(addr)  (((unsigned long)(addr) + (sizeof(long) << 5)) & (~(sizeof(long) - 1)))
 
+#define ALIGN_WITH_LONG(num)    (((num) + sizeof(long) - 1) & (~(sizeof(long) - 1)))
+
 #define PATTR(attr)     (1UL << (attr))
 
 
@@ -66,15 +68,15 @@ struct GlobalMemManager{
     unsigned int GMDLength;
 
     unsigned long*  BitsMap;
-    unsigned long   BitsMapSize;    // Total bits in BitsMap
+    unsigned long   BitsMapCount;    // Total bits in BitsMap
     unsigned long   BitsMapLength;  // Bytes Of BitsMap
 
     struct Page*    PagesGroup;
-    unsigned long   PagesSize;
+    unsigned long   PagesCount;
     unsigned long   PagesLength;
 
     struct Zone*    ZonesGroup;
-    unsigned long   ZonesSize;
+    unsigned long   ZonesCount;
     unsigned long   ZonesLength;
 
 
@@ -90,7 +92,7 @@ struct GlobalMemManager{
 
 struct Zone{
     struct Page *   PagesGroup;
-    unsigned long   PagesSize;
+    unsigned long   PagesCount;
 
     unsigned long   ZoneStartAddr;
     unsigned long   ZoneEndAddr;
@@ -111,6 +113,31 @@ struct Page{
     unsigned long   Attribute;
     unsigned long   RefCount;
     unsigned long   age;
+};
+
+struct List;
+
+struct Slab{
+    struct List list;
+    struct Page *page;
+    void *Vaddress;
+
+    unsigned long* ColorMap;
+    unsigned long UsingCount;
+    unsigned long FreeCount;
+
+    unsigned long ColorLength;
+    unsigned long ColorCount;
+};
+
+struct SlabCache{
+    unsigned long size;
+    unsigned long TotalUse;
+    unsigned long TotalFree;
+    void * (*Constructor)(void* Vaddress, unsigned long arg);
+    void * (*Destructor)(void* Vaddress, unsigned long arg);
+    struct Slab *CachePool;
+    struct Slab *CacheDmaPool;
 };
 
 void InitMemory();

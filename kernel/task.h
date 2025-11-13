@@ -2,6 +2,7 @@
 #define TASK_H
 
 #define STACK_SIZE 32768
+#define MAX_SYS_CALL 128
 
 #define PF_KTHREAD 1
 #define NR_CPUS 16
@@ -77,6 +78,7 @@
             :"memory", "rax");   \
     }while (0);
 
+
 enum TASK_STATE{
     TASK_RUNING = 0,
     TASK_UNINTERRPTABLE
@@ -88,11 +90,7 @@ enum TASK_FLAG{
     CLONG_SIGNAL,
 };
 
-
-struct List{
-    struct List *prev;
-    struct List *next;
-};
+struct List;
 
 typedef unsigned long pml4t_t ;
 
@@ -196,17 +194,28 @@ struct PtRegs{
     unsigned long ss;    
 };
 
+inline struct TaskStruct * GetCurrent(){
+    struct TaskStruct* current = NULL;
+    __asm__ volatile("andq %%rsp, %0": "=r"(current): "0"(~32767UL));
+    return current;
+}
+
+/*          TASK         */
 unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize);
 void TaskInit();
 
 void    ret_from_intr(void);
 void    ret_system_call(void);
 void    KernelThreadFunc(void);
-void    ListInit(struct List *list);
-struct  TaskStruct * GetCurrent();
-struct  List* ListNext(struct List *list);
-void    ListForeAdd(struct List *ForeList, struct List *list);
 void    __Switch_To(struct TaskStruct *prev, struct TaskStruct *next);
 void    KernelThreadFunc(void);
+
+
+/*          SYSCALL         */
+typedef unsigned long (*system_call_t)(struct PtRegs *regs);
+
+void            Syscall(void);
+unsigned long   SystemCallFunc(struct PtRegs* regs);
+unsigned long   NoSystemCall(struct PtRegs* regs);
 
 #endif

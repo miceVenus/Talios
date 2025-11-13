@@ -1,6 +1,7 @@
 #include "linkage.h"
 #include "gate.h"
 #include "printk.h"
+#include "interrupt.h"
 #include "lib.h"
 
 #define SAVE_ALL_REGS    \
@@ -69,7 +70,7 @@ BUILD_IRQ(0x35);
 BUILD_IRQ(0x36);
 BUILD_IRQ(0x37);
     
-void (* interrupt[24]) (void) = {
+interrupt_t interrupt[24] = {
     IRQ0x20_interrupt,
     IRQ0x21_interrupt,
     IRQ0x22_interrupt,
