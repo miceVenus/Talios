@@ -33,13 +33,17 @@
 
 #define BITS_PER_LONG     ((sizeof(long) << 3))
 
+#define BITS_MAP_LENGTH(count) (((count) + (sizeof(long) << 3) - 1) >> 6)
+
 
 // Set a Small Mem Gap
-#define MEM_GAP_ALIGN(addr)  (((unsigned long)(addr) + (sizeof(long) << 5)) & (~(sizeof(long) - 1)))
+#define MEM_GAP_ALIGN(addr)  (((unsigned long)(addr) + (sizeof(long) << 3)) & (~(sizeof(long) - 1)))
 
 #define ALIGN_WITH_LONG(num)    (((num) + sizeof(long) - 1) & (~(sizeof(long) - 1)))
 
 #define PATTR(attr)     (1UL << (attr))
+
+#define KMALLOC_SLAB_SIZE 16
 
 
 enum PageAttribute{
@@ -132,15 +136,17 @@ struct Slab{
 
 struct SlabCache{
     unsigned long size;
-    unsigned long TotalUse;
     unsigned long TotalFree;
+    unsigned long TotalUse;
     void * (*Constructor)(void* Vaddress, unsigned long arg);
     void * (*Destructor)(void* Vaddress, unsigned long arg);
     struct Slab *CachePool;
     struct Slab *CacheDmaPool;
 };
 
+
 void InitMemory();
+void* kmalloc(unsigned long size, unsigned long flags);
 void PageInit(struct Page *p, unsigned long flag);
 struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr);
 

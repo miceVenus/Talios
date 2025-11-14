@@ -220,7 +220,7 @@ int PrintkInit(){
         .cursorY = 0,
         .charWidth = 8,
         .charHeight = 16,
-        .framebuffer = (uint32_t*)0xffff800000a00000
+        .framebuffer = (uint32_t*)0xffff800003000000
     };
     return 1;
 }
