@@ -132,6 +132,12 @@ inline int ListIsEmpty(struct List *list){
     return 0;
 }
 
+inline int ListDelete(struct List *list){
+    list->prev->next = list->next;
+    list->next->prev = list->prev;
+    return 1;
+}
+
 
 void    memset(void *Src, char num, size_t n);
 void    memcopy(void *Src, void *Dst, size_t n);

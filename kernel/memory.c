@@ -7,6 +7,7 @@ void ListInit(struct List *list);
 
 void ListForeAdd(struct List *new, struct List *list);
 void ListBackAdd(struct List *List, struct List *new);
+int ListDelete(struct List *list);
 
 struct List* ListNext(struct List *list);
 
@@ -58,11 +59,11 @@ struct Slab* CreatSlab(unsigned long size, int ZoneSelector){
     slab->ColorLength   = BITS_MAP_LENGTH(slab->FreeCount);
     slab->ColorMap      = (unsigned long*)kmalloc(sizeof(unsigned long) * slab->ColorLength, 0);
 
-    if(!(slab->ColorMap)) {free(slab); return NULL;}
+    if(!(slab->ColorMap)) {kfree(slab); return NULL;}
 
     memset(slab->ColorMap, 0, sizeof(unsigned long) * slab->ColorLength);
 
-    slab->page          = AllocPage(ZoneSelector, 1, PATTR(PG_Kernel));
+    slab->page          = AllocPage(ZoneSelector, 1, PATTR(PG_KERNEL));
 
     if(!(slab->page)) {kfree(slab -> ColorMap); kfree(slab); return NULL;}
 
@@ -100,6 +101,7 @@ int DeleteSlabCache(struct SlabCache *SC){
     struct Slab* slab       = SC->CachePool;
     struct Slab* tmp_slab   = NULL;
     while(!ListIsEmpty(&slab->list)){
+        ListDelete(&slab->list);
         kfree(slab->ColorMap);
         CleanPage(slab->page);
         FreePage(slab->page, 1);
@@ -107,6 +109,7 @@ int DeleteSlabCache(struct SlabCache *SC){
         slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
         kfree(tmp_slab);
     }
+    ListDelete(&slab->list);
     kfree(slab->ColorMap);
     CleanPage(slab->page);
     FreePage(slab->page, 1);
@@ -137,7 +140,7 @@ void * AllocSlab(struct SlabCache *SC, unsigned long arg){
                     i += 63;
                     continue;
                 };
-                if(*(slab->ColorMap + (i >> 6)) & (1UL << i % 64) == 0){
+                if((*(slab->ColorMap + (i >> 6)) & (1UL << i % 64)) == 0){
                     *(slab->ColorMap + (i >> 6)) |= (1UL << (i % 64));
                     slab->FreeCount--;
                     slab->UsingCount++;
@@ -166,7 +169,7 @@ int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
     unsigned long index = 0;
 
     do{
-        if(slab->Vaddress <= Vaddress && Vaddress - slab->Vaddress < PAGE_2M_SIZE){
+        if(slab->Vaddress <= Vaddress && ((unsigned long)(Vaddress - slab->Vaddress) < PAGE_2M_SIZE)){
             index = (unsigned long)(Vaddress - slab->Vaddress) / SC->size;
             *(slab->ColorMap + (index >> 6)) ^= (1UL << index % 64);
             slab->FreeCount++;
@@ -180,6 +183,7 @@ int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
 
             if(slab->UsingCount == 0 && SC->TotalFree >= slab->ColorCount * 1.5){
                 SC->TotalFree -= slab->ColorCount;
+                ListDelete(&slab->list);
                 kfree(slab->ColorMap);
                 CleanPage(slab->page);
                 FreePage(slab->page, 1);
@@ -206,10 +210,10 @@ unsigned long SlabCacheInit(){
         CachePool->FreeCount    = CachePool->ColorCount;
         ListInit(&CachePool->list);
         CachePool->ColorLength  = BITS_MAP_LENGTH(CachePool->ColorCount);
-        CachePool->ColorMap     = StartAddr + sizeof(struct Slab);
+        CachePool->ColorMap     = (unsigned long*)(StartAddr + sizeof(struct Slab));
         memset(CachePool->ColorMap, 0, CachePool->ColorLength * sizeof(unsigned long));
 
-        MMS.EndStruct = CachePool->ColorMap + (CachePool->ColorLength * sizeof(unsigned long));
+        MMS.EndStruct = (unsigned long)CachePool->ColorMap + (CachePool->ColorLength * sizeof(unsigned long));
         StartAddr = MEM_GAP_ALIGN(MMS.EndStruct);
 
         KmallocSlabSet[i].CachePool = CachePool;
@@ -219,11 +223,12 @@ unsigned long SlabCacheInit(){
     ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
                     MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
 
-    for(int i = PAGE_2M_INDEX(TempAddr); i < PAGE_2M_INDEX(VIRT_TO_PHY(MMS.EndStruct)); i++){
+    for(unsigned long i = PAGE_2M_INDEX(TempAddr); i < PAGE_2M_INDEX(VIRT_TO_PHY(MMS.EndStruct)); i++){
         struct Page* TmpPage = (struct Page*)(MMS.PagesGroup + i);
         TmpPage->ZoneStruct->PageFreeCount--;
         TmpPage->ZoneStruct->PageUsingCount++;
-        PageInit(TmpPage, PATTR(PG_Kernel) | PATTR(PG_Kernel_Init) | PATTR(PG_PTable_Maped));
+        MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
+        InitPage(TmpPage, PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) | PATTR(PG_PTABLE_MAPPED));
     }
 
     ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
@@ -233,20 +238,22 @@ unsigned long SlabCacheInit(){
         unsigned long virtual   = PAGE_2M_ALIGN_UP(MMS.EndStruct + PAGE_2M_SIZE * i);
         unsigned long Physical  = VIRT_TO_PHY(virtual);
         struct Page *page = (struct Page*)(MMS.PagesGroup + PAGE_2M_INDEX(Physical));
-        PageInit(page, PATTR(PG_PTable_Maped) | PATTR(PG_Kernel_Init)| PATTR(PG_Kernel));
+        MMS.BitsMap[BITS_MAP_INDEX(page->PhyAddr)] |= BITS_MAP_BIT_PATTERN(page->PhyAddr);
+        InitPage(page, PATTR(PG_PTABLE_MAPPED) | PATTR(PG_KERNEL_INIT)| PATTR(PG_KERNEL));
         page->ZoneStruct->PageUsingCount++;
         page->ZoneStruct->PageFreeCount--;
         KmallocSlabSet[i].CachePool->page = page;
-        KmallocSlabSet[i].CachePool->Vaddress = virtual;
+        KmallocSlabSet[i].CachePool->Vaddress = (void *)virtual;
     }
 
     ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
                     MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
     
+    return 1;
 }
 /// @brief ugly but useful
 /// @param ZoneSelector An Enum Type Defined In memory.h To Control The Type Of Memory
-/// @param number   0 < Number <= 64
+/// @param number   0 < Number < 64
 /// @param PageAttr An Enum Type Defined In memory.h To Describe Page 
 /// @return Alloced Memory Start
 struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
@@ -257,24 +264,28 @@ struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
     struct Page *p;
     unsigned long value;
     unsigned long ZoneStart, ZoneEnd;
-    unsigned long pattern = number == 64 ? 0xffffffffffffffffUL : ~((1UL << (BITS_PER_LONG - number)) - 1);
+    unsigned long pattern = number == 64 ? 0xffffffffffffffff : ~((1UL << (BITS_PER_LONG - number)) - 1);
     unsigned long PatternBak = pattern;
+    unsigned long DefaultAttr;
     unsigned long i, j, k, l, tmp;
 
     switch (ZoneSelector){
         case ZONE_DMA_INDEX:
             ZoneStart   = 0;
             ZoneEnd     = ZoneDmaIndex; 
+            DefaultAttr = PATTR(PG_PTABLE_MAPPED); 
             goto LABEL_HANDLE;
 
         case ZONE_NORMAL_INDEX:
             ZoneStart   = ZoneDmaIndex;
             ZoneEnd     = ZoneNormalIndex;
+            DefaultAttr = PATTR(PG_PTABLE_MAPPED);
             goto LABEL_HANDLE;
 
         case ZONE_UNMAPED_INDEX:
             ZoneStart   = ZoneUnmapedIndex;
             ZoneEnd     = MMS.ZonesCount - 1;
+            DefaultAttr = 0;
             goto LABEL_HANDLE;
         
         default:
@@ -308,7 +319,11 @@ struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
 
                 for(k = 0; k <= BITS_PER_LONG - number; k++){
                     if(!(value & pattern)){
-                        for(l = 0; l < (unsigned)number; l++) PageInit(p + k + l, PageAttr);
+                        for(l = 0; l < (unsigned)number; l++){
+                            struct Page *TmpPage = (p + k + l);
+                            MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
+                            InitPage(TmpPage, PageAttr | DefaultAttr);
+                        }
                         return p + k;
                     }
                     pattern >>= 1;
@@ -329,6 +344,18 @@ int FreePage(struct Page* page, int number){
     unsigned long index = PAGE_2M_INDEX(VIRT_TO_PHY(MMS.EndStruct));
     if(page <= MMS.PagesGroup + index) {ColorPrintfk(RED, BLACK, "Can`t Free Fixed Page"); return 0;}
 
+    if(page == NULL) {ColorPrintfk(RED, BLACK, "page == NULL In FreePage()\n"); return 0;}
+
+    struct Page *tmp = page;
+    for(int i = 0; i < number; i++){
+        tmp = page + i;
+        MMS.BitsMap[BITS_MAP_INDEX(tmp->PhyAddr)] ^= BITS_MAP_BIT_PATTERN(tmp->PhyAddr);
+
+        tmp->ZoneStruct->PageFreeCount++;
+        tmp->ZoneStruct->PageUsingCount--;
+        tmp->Attribute = 0;
+    }
+
     ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
                     MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
     return 1;
@@ -342,7 +369,6 @@ void* kmalloc(unsigned long size, unsigned long flags){
 
         if(KmallocSlabSet[i].size < size) continue;
 
-        struct Slab* slab = KmallocSlabSet[i].CachePool;
         if(KmallocSlabSet[i].TotalFree == 0){
             struct Page* page = AllocPage(ZONE_NORMAL_INDEX, 1, 0);
             if(page == NULL){ColorPrintfk(RED, BLACK, "Alloc Page failed in kmalloc"); return NULL;}
@@ -354,21 +380,21 @@ void* kmalloc(unsigned long size, unsigned long flags){
                 case 0x80:
                 case 0x100:
                 case 0x200:{
-                    unsigned long virtual = PHY_TO_VIRT(page);
-                    struct Slab* slab = (struct Slab*)virtual;
-                    unsigned int StructSize = (sizeof(struct Slab) + ksize - 1) / ksize;
-                    slab->UsingCount    = StructSize;
-                    slab->ColorMap      = (unsigned long *)(virtual);
-                    slab->ColorCount    = PAGE_2M_SIZE  / ksize ;
+                    unsigned long virtual = (unsigned long)PHY_TO_VIRT(page);
+                    unsigned int StructSize = sizeof(struct Slab) + (PAGE_2M_SIZE / ksize / sizeof(unsigned long));
+                    struct Slab* slab = (struct Slab*)(virtual + PAGE_2M_SIZE - StructSize);
+                    slab->UsingCount    = 0;
+                    slab->FreeCount     = (PAGE_2M_SIZE - StructSize + ksize - 1) / ksize;
+                    slab->ColorMap      = (unsigned long *)((unsigned long)slab + sizeof(struct Slab));
+                    slab->ColorCount    = slab->FreeCount;
                     slab->ColorLength   = BITS_MAP_LENGTH(slab->ColorCount);
-                    slab->FreeCount     = slab->ColorCount - StructSize;
-                    memset(slab->ColorMap, 0, slab->ColorLength * sizeof(long));
-                    for(int i = 0; i < StructSize; i++){
+                    memset(slab->ColorMap, 0xff, slab->ColorLength * sizeof(long));
+                    for(unsigned long i = 0; i < slab->ColorCount; i++){
                         *(slab->ColorMap + (i >> 6)) ^= (1UL << (i % 64)); 
                     }
-                    ListINIt(&slab->list);
+                    ListInit(&slab->list);
                     slab->page = page;
-                    slab->Vaddress = virtual;
+                    slab->Vaddress = (void *)virtual;
                     ListForeAdd(&KmallocSlabSet[i].CachePool->list, &slab->list);
                     break;
                 }
@@ -384,8 +410,8 @@ void* kmalloc(unsigned long size, unsigned long flags){
                 case 0x80000:
                 case 0x100000:{
                     struct Slab* slab = (struct Slab*)kmalloc(sizeof(struct Slab), 0);
-                    unsigned long virtual = PHY_TO_VIRT(page);
-                    slab->Vaddress = virtual;
+                    unsigned long virtual = (unsigned long)PHY_TO_VIRT(page);
+                    slab->Vaddress = (void *)virtual;
                     slab->ColorCount = PAGE_2M_SIZE / ksize;
                     slab->ColorLength = BITS_MAP_LENGTH(slab->ColorCount);
                     slab->ColorMap = (unsigned long*)virtual;
@@ -393,7 +419,7 @@ void* kmalloc(unsigned long size, unsigned long flags){
                     ListInit(&slab->list);
                     slab->page = page;
                     slab->UsingCount = 0;
-                    slab->Vaddress = virtual;
+                    slab->Vaddress = (void *)virtual;
                     ListForeAdd(&KmallocSlabSet[i].CachePool->list, &slab->list);
                     break;
                 }
@@ -408,7 +434,65 @@ void* kmalloc(unsigned long size, unsigned long flags){
                         MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
         return AllocSlab(&KmallocSlabSet[i], 0);
     }
+    ColorPrintfk(RED, BLACK, "Can`t Alloc Memory In kmalloc()");
+    return 0;
 }
+
+unsigned int kfree(void *ptr){
+    unsigned long PageAddr = PAGE_2M_ALIGN_DOWN((unsigned long)ptr);
+    for(int i = 0; i < KMALLOC_SLAB_SIZE; i++){
+        struct SlabCache* SC = &KmallocSlabSet[i];
+        if(SC->TotalUse == 0) continue;
+
+        struct Slab *slab = SC->CachePool;
+        do{
+            if(slab->UsingCount == 0) continue;
+
+            if((unsigned long)slab->Vaddress == PageAddr){
+                unsigned long offset = ((unsigned long)ptr - PageAddr) / SC->size;
+                slab->ColorMap[offset >> 6] ^= (1UL << offset % 64);
+                slab->UsingCount--;
+                slab->FreeCount++;
+                SC->TotalFree++;
+                SC->TotalUse--;
+
+                unsigned long ksize = SC->size;
+
+                if(slab == SC->CachePool) return 1;
+
+                if((slab->UsingCount != 0) || (SC->TotalFree < (slab->FreeCount) * 1.5)) return 1;
+
+                switch (ksize){
+                    case 0x20:
+                    case 0x40:
+                    case 0x80:
+                    case 0x100:
+                    case 0x200:{
+                        SC->TotalUse -= slab->UsingCount;
+                        SC->TotalFree -= slab->FreeCount;
+                        ListDelete(&slab->list);
+                        CleanPage(slab->page);
+                        FreePage(slab->page, 1);
+                        break;
+                    }
+                    default:{
+                        SC->TotalFree -= slab->FreeCount;
+                        ListDelete(&slab->list);
+                        CleanPage(slab->page);
+                        FreePage(slab->page, 1);
+                        kfree(slab);
+                        break;
+                    }
+                }
+                return 1;
+            }
+            slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
+        }while(SC->CachePool != slab);
+    }
+    ColorPrintfk(RED, BLACK, "Can`t Free Memory In kfree");
+    return 0;
+}
+
 void InitMemory(){
 
     MMS = (struct GlobalMemManager){
@@ -553,8 +637,8 @@ void InitMemory(){
 
     for(unsigned long i = 0; i < MMS.ZonesCount; i++){
         struct Zone * z = MMS.ZonesGroup + i;
-        // 4GB For Kernel
-        if(z -> ZoneStartAddr == 0x100000000){
+        // 4GB For Kernel In Zone Normal
+        if(z -> ZoneStartAddr == 0x100000000 && !ZoneUnmapedIndex){
             ZoneUnmapedIndex = i;
         }
     }
@@ -569,13 +653,14 @@ void InitMemory(){
         struct Page *TmpPage = (struct Page*)(MMS.PagesGroup + i);
         TmpPage->ZoneStruct->PageFreeCount--;
         TmpPage->ZoneStruct->PageUsingCount++;
-        PageInit(TmpPage, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_Kernel_Init) | PATTR(PG_PTable_Maped));
+        MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
+        InitPage(TmpPage, PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) | PATTR(PG_PTABLE_MAPPED));
     }
 
     // Flush The Consistency Mapping 
 
     // unsigned long CR3 = GetCr3();
-
+ 
     // ColorPrintfk(BLUE, BLACK, "CR3 : %X ; PML4E : %X ; PDPTE : %X ; \n", CR3, *PHY_TO_VIRT(CR3), \
     //                                                                     *PHY_TO_VIRT(*(PHY_TO_VIRT(CR3)) & (~0xff)));
     // *PHY_TO_VIRT(CR3 & (~0xfffUL)) = 0;
@@ -583,26 +668,39 @@ void InitMemory(){
     // FlushTLB();
 }
 
-void PageInit(struct Page *p, unsigned long flag){
-    if(!p -> Attribute){
-        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_BIT_PATTERN(p->PhyAddr);
-        p -> RefCount++;
-        p -> Attribute = flag;
-        p -> ZoneStruct -> PageFreeCount--;
-        p -> ZoneStruct -> PageUsingCount++;
-        p -> ZoneStruct -> TotalPagesLink++;
+void InitPage(struct Page *p, unsigned long flag){
+    p -> Attribute |= flag;
 
-    }
-    else if ((p->Attribute & PATTR(PG_K_Share_To_U)) || (p->Attribute & PATTR(PG_Referenced)) ||
-              (flag & PATTR(PG_K_Share_To_U)) || (flag & PG_Referenced))
-    {
-        p -> Attribute |= flag;
+    if(!p->RefCount || (p->Attribute & PG_SHARED)){
         p -> RefCount++;
         p -> ZoneStruct->TotalPagesLink++;
     }
-    else
-    {
-        MMS.BitsMap[BITS_MAP_INDEX(p->PhyAddr)] |= BITS_MAP_BIT_PATTERN(p->PhyAddr);
-        p -> Attribute |= flag;
+}
+
+void CleanPage(struct Page *p){
+    p->RefCount--;
+    p->ZoneStruct->TotalPagesLink--;
+
+    if(!p->RefCount){
+        p->Attribute &= PATTR(PG_PTABLE_MAPPED);
+    }
+}
+
+unsigned long GetPageAttr(struct Page* p){
+    if(p == NULL){
+        ColorPrintfk(RED, BLACK, "p is NULL In GetPageAttr()\n");
+        return 0;
+    }else{
+        return p->Attribute;
+    }
+}
+
+unsigned long SetPageAttr(struct Page* p, unsigned long flags){
+    if(p == NULL){
+        ColorPrintfk(RED, BLACK, "p is NULL In SetPageAttr()\n");
+        return 0;
+    }else{
+        p->Attribute = flags;
+        return 1;
     }
 }

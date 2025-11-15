@@ -27,5 +27,7 @@ void main(){
 
     InitMemory();
 
+    SlabCacheInit();
+
     TaskInit();
 }

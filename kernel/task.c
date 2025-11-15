@@ -161,7 +161,7 @@ unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long a
 
 // Uncomplete Function
 unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize){
-    struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 1, PATTR(PG_Active) | PATTR(PG_Kernel) | PATTR(PG_PTable_Maped));
+    struct Page *p = AllocPage(ZONE_NORMAL_INDEX, 1, PATTR(PG_ACTIVE) | PATTR(PG_KERNEL) | PATTR(PG_PTABLE_MAPPED));
 
     if(p == NULL) return 0;
 

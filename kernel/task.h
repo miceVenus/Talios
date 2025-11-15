@@ -1,6 +1,8 @@
 #ifndef TASK_H
 #define TASK_H
 
+#include "lib.h"
+
 #define STACK_SIZE 32768
 #define MAX_SYS_CALL 128
 
@@ -89,8 +91,6 @@ enum TASK_FLAG{
     CLONG_FILES,
     CLONG_SIGNAL,
 };
-
-struct List;
 
 typedef unsigned long pml4t_t ;
 

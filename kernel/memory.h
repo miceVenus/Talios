@@ -1,6 +1,8 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+#include "lib.h"
+
 #define MAX_GMD_LEN     32
 #define MEM_STRUCT_ADDR 0xffff800000007e00
 
@@ -47,12 +49,27 @@
 
 
 enum PageAttribute{
-    PG_PTable_Maped = 0 ,
-    PG_Kernel_Init      , 
-    PG_Active           ,
-    PG_Kernel           ,
-    PG_Referenced       ,
-    PG_K_Share_To_U
+    // mapped = 1 or unmapped = 0
+    PG_PTABLE_MAPPED = 0 ,
+
+    // Is Used In Init Code?
+    PG_KERNEL_INIT      , 
+
+    PG_ACTIVE           ,
+
+    // Is Used In Kernel?
+    PG_KERNEL           ,
+
+    PG_REFERENCED       ,
+
+    // Is Shared Or Only Page?
+    PG_K_SHARE_To_U     ,
+
+    // Is Used In Device?
+    PG_DEVICE           ,
+
+    // SHARED PAGE
+    PG_SHARED
 };
 
 enum ZONE_INDEX{
@@ -119,8 +136,6 @@ struct Page{
     unsigned long   age;
 };
 
-struct List;
-
 struct Slab{
     struct List list;
     struct Page *page;
@@ -147,7 +162,19 @@ struct SlabCache{
 
 void InitMemory();
 void* kmalloc(unsigned long size, unsigned long flags);
-void PageInit(struct Page *p, unsigned long flag);
+unsigned int kfree(void *ptr);
+void InitPage(struct Page *p, unsigned long flag);
+void CleanPage(struct Page *p);
+unsigned long SlabCacheInit();
+unsigned long GetPageAttr(struct Page* p);
+unsigned long SetPageAttr(struct Page* p, unsigned long flags);
+int FreePage(struct Page* page, int number);
 struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr);
+int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg);
+int DeleteSlabCache(struct SlabCache *SC);
+struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)(void *Vaddr, unsigned long arg), 
+                                    void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg);
+struct Slab* CreatSlab(unsigned long size, int ZoneSelector);
+
 
 #endif
