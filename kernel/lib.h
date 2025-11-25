@@ -27,6 +27,8 @@ typedef unsigned char uint8_t;
 
 #define cli()  __asm__ volatile("cli":::"memory")
 
+#define mfence() __asm__ volatile("mfence":::"memory")
+
 #define GetCr3() ({ \
     unsigned long temp;\
     __asm__ volatile("movq %%cr3, %0":"=r"(temp)::"memory");\

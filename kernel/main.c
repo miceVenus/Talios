@@ -6,11 +6,14 @@
 #include "interrupt.h"
 #include "task.h"
 #include "cpu.h"
+#include "8259a.h"
+#include "apic.h"
+#include "test/memory_test.h"
 
+void BRK(){
+
+}
 extern struct GlobalMemManager MMS;
-void BRKP(){
-
-};
 void main(){
     PrintkInit();
     
@@ -21,13 +24,24 @@ void main(){
             0xffff800000007c00, 0xffff800000007c00);
 
     SysVectorInit();
-    InterruptInit();
-
+        
     CpuInit();
 
     InitMemory();
 
     SlabCacheInit();
 
+    // run_memory_tests();
+
+    InitPageTable();
+
+    #ifdef APIC
+        InitIoApic();
+    #else
+        Init8259a();
+    #endif
+
+    while (1);
+    
     TaskInit();
 }

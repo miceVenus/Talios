@@ -47,6 +47,12 @@
 
 #define KMALLOC_SLAB_SIZE 16
 
+#define SetPDPT(PML4E, PDPT, flags) (*(PML4E) = ((PDPT) | (flags)))
+#define SetPD(PDPTE, PD, flags)     (*(PDPTE) = ((PD) | (flags)))
+#define SetPDE(PD, PDE, flags)      (*(PD) = ((PDE) | (flags)))
+
+
+
 
 enum PageAttribute{
     // mapped = 1 or unmapped = 0
@@ -175,6 +181,7 @@ int DeleteSlabCache(struct SlabCache *SC);
 struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)(void *Vaddr, unsigned long arg), 
                                     void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg);
 struct Slab* CreatSlab(unsigned long size, int ZoneSelector);
+void InitPageTable();
 
 
 #endif

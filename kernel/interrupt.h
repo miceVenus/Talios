@@ -3,6 +3,4 @@
 
 typedef void (*interrupt_t)(void);
 
-void InterruptInit();
-
 #endif
