@@ -87,12 +87,12 @@ static inline unsigned char IN8b(unsigned char port){
     return num;
 }
 
-static inline void OUT32b(unsigned char port, unsigned int num){
+static inline void OUT32b(unsigned int port, unsigned int num){
     __asm__ volatile("outl %1, %%dx" : : "d"(port), "a"(num): "memory");
 }
 
 
-static inline unsigned int IN32b(unsigned char port){
+static inline unsigned int IN32b(unsigned int port){
     unsigned int num;
     __asm__ volatile("inl %%dx, %0" :"=a"(num): "d"(port): "memory");
     return num;

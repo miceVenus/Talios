@@ -57,4 +57,4 @@ gdb.execute('set disassembly-flavor intel')
 # User program entry
 gdb.execute('b *0x100000')  # __start
 gdb.execute('continue')
-gdb.execute('b AllocPage')  # main
+gdb.execute('b main')  # main

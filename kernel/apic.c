@@ -4,6 +4,7 @@
 #include "printk.h"
 #include "interrupt.h"
 #include "gate.h"
+#include "pci.h"
 #include "memory.h"
 
 extern interrupt_t interrupt[24];
@@ -119,8 +120,27 @@ void IoApicPageTableRemap(){
     unsigned long IoApicAddr    =   (unsigned long)PHY_TO_VIRT(0xfec00000);
     IoApicMap.PhysicalAddr      =   0xfec00000;
     IoApicMap.VirtualIndexAddr  =   (unsigned char *)IoApicAddr;
-    IoApicMap.VirtualDataAddr   =   (unsigned int *)(IoApicAddr + 10);
+    IoApicMap.VirtualDataAddr   =   (unsigned int *)(IoApicAddr + 0x10);
     unsigned long *tmp;
+
+    unsigned long Cr3 = GetCr3();
+    tmp =   (unsigned long *)((unsigned long)PHY_TO_VIRT(Cr3 & (~0xfff))) + GetBits(IoApicAddr, PAGE_GDT_SHIFT, 9);
+
+    if(*tmp == 0){
+        void *virtual = kmalloc(PAGE_4K_SIZE, 0);
+        SetPDPT(tmp, VIRT_TO_PHY(virtual), 0x3);
+    }
+    tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + GetBits(IoApicAddr, PAGE_1G_SHIFT, 9);
+    
+    if(*tmp == 0){
+        void *virtual = kmalloc(PAGE_4K_SIZE, 0);
+        SetPD(tmp, VIRT_TO_PHY(virtual), 0x3);
+    }
+
+    tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + GetBits(IoApicAddr, PAGE_2M_SHIFT, 9);
+    SetPDE(tmp, IoApicMap.PhysicalAddr, 0x83);
+
+    FlushTLB();
 
     *IoApicMap.VirtualIndexAddr =   1;
     mfence();
@@ -129,33 +149,11 @@ void IoApicPageTableRemap(){
 
     if(GetBits(version, 0, 8) == 0x11) IoApicMap.VirtualEoiAddr = NULL;
     else IoApicMap.VirtualEoiAddr = (unsigned int *)(IoApicAddr + 40);
-
-    struct Page* page       = MMS.PagesGroup + PAGE_2M_INDEX(IoApicMap.PhysicalAddr);
-
-    unsigned long Cr3 = GetCr3();
-    tmp =   (unsigned long *)((unsigned long)PHY_TO_VIRT(Cr3 & (~0xfff))) + 
-            GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_GDT_SHIFT, 9);
-
-    if(*tmp == 0){
-        void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-        SetPDPT(tmp, VIRT_TO_PHY(virtual), 0x3);
-    }
-    tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
-            GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_1G_SHIFT, 9);
-    
-    if(*tmp == 0){
-        void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-        SetPD(tmp, VIRT_TO_PHY(virtual), 0x3);
-    }
-
-    tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
-            GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_2M_SHIFT, 9);
-    SetPDE(tmp, page->PhyAddr, 0x83);
-
-    FlushTLB();
 }
 
 void InitIoApic(){
+
+    IoApicPageTableRemap();
 
     *IoApicMap.VirtualIndexAddr = 0;
     mfence();
@@ -183,7 +181,10 @@ void InitIoApic(){
     OUT8b(0xa1, 0xff);
 
     InitLocalApic();
-    IoApicPageTableRemap();
+
+    unsigned int XBCS = ReadPci32(0, 1, 0, 0x4e);
+    XBCS |= 0x100;
+    WritePci32(0, 1, 0, 0x4e, XBCS);
 
     sti();
 }
