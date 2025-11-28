@@ -8,7 +8,7 @@ NAS 	:= 	nasm
 BOCHS 	:= 	bochs
 BOCHSFILE 	:= ./bochsrc.floppy
 
-PIC		:= 	PIC
+PIC		:= 	APIC
 
 
 CPFLAGS :=  -I elf64-x86-64 -S -R ".eh_frame" -R ".comment"

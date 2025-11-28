@@ -70,7 +70,7 @@ BUILD_IRQ(0x35);
 BUILD_IRQ(0x36);
 BUILD_IRQ(0x37);
     
-interrupt_t interrupt[24] = {
+interrupt_t interrupt[NR_IRQS] = {
     IRQ0x20_interrupt,
     IRQ0x21_interrupt,
     IRQ0x22_interrupt,
@@ -97,17 +97,50 @@ interrupt_t interrupt[24] = {
     IRQ0x37_interrupt,
 };
 
+IrqDescT InterruptDesc[NR_IRQS] = {0};
+
+int RegisterIrq(unsigned long irq, void *arg, void (*handler)(unsigned long rsp, unsigned long nr, unsigned long arg),
+                unsigned long flags, HwInterruptT * controller, unsigned long parameter, char *IrqName){
+    IrqDescT * p = &InterruptDesc[irq - 32];
+    p->parameter = parameter;
+    p->IrqName = IrqName;
+    p->flags = flags;
+    p->controller = controller;
+
+    p->controller->install(irq, arg);
+    p->controller->enable(irq);
+
+    return 1;
+}
+
+int UnregisterIrq(unsigned long irq){
+
+    IrqDescT * p = &InterruptDesc[irq - 32];
+
+    p->controller->disable(irq);
+    p->controller->uninstall(irq);
+
+    p->parameter = 0;
+    p->IrqName = NULL;
+    p->flags = 0;
+    p->handler = NULL;
+    p->controller = NULL;
+
+    return 1;
+}
+
 // Uncompleted !!!!!
-void DoIRQ(unsigned long rsp, unsigned long nr){
-    switch (nr){
-    case 0x21: {
-            unsigned char KBCode = IN8b(0x60);
-            ColorPrintfk(BLUE, BLACK, "get keyboard code %x\n", KBCode);
-        };
-        break;
-    
-    default:
-        break;
-    }
-    OUT8b(0x20, 0x20); // Send INTR To CPU Rest ISR
+void DoIRQ(struct PtRegs * regs, unsigned long nr){
+
+    IrqDescT * irq = &InterruptDesc[nr - 32];
+
+    unsigned char x = IN8b(0x60);
+    ColorPrintfk(BLUE, BLACK, "get keyboard code %x\n", x);
+
+    if(irq->handler != NULL) irq->handler(regs, nr, irq->parameter);
+    if(irq->controller && irq->controller->ack) irq->controller->ack(nr);
+
+    wrmsr(0x80b, 0x0);
+
+    // OUT8b(0x20, 0x20); // Send INTR To CPU R 8259a
 }

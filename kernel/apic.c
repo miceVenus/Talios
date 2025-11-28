@@ -147,7 +147,7 @@ void IoApicPageTableRemap(){
     unsigned int version  = *IoApicMap.VirtualDataAddr;
     mfence();
 
-    if(GetBits(version, 0, 8) == 0x11) IoApicMap.VirtualEoiAddr = NULL;
+    if(GetBits(version, 0, 8) == I440FX) IoApicMap.VirtualEoiAddr = NULL;
     else IoApicMap.VirtualEoiAddr = (unsigned int *)(IoApicAddr + 40);
 }
 
@@ -162,9 +162,11 @@ void InitIoApic(){
     ColorPrintfk(BLUE, BLACK, "IO APIC ID %X", GetBits(*IoApicMap.VirtualDataAddr, 24, 4));
     mfence();
 
+    unsigned int IoApicVersion;
     *IoApicMap.VirtualIndexAddr = 1;
     mfence();
-    ColorPrintfk(BLUE, BLACK, "IO APIC VERSION : %X", GetBits(*IoApicMap.VirtualDataAddr, 0, 8));
+    IoApicVersion = *IoApicMap.VirtualDataAddr;
+    ColorPrintfk(BLUE, BLACK, "IO APIC VERSION : %X", GetBits(IoApicVersion, 0, 8));
     mfence();
 
     for(unsigned int i = 0x10; i < 0x40; i += 2){
@@ -182,9 +184,20 @@ void InitIoApic(){
 
     InitLocalApic();
 
-    unsigned int XBCS = ReadPci32(0, 1, 0, 0x4e);
-    XBCS |= 0x100;
-    WritePci32(0, 1, 0, 0x4e, XBCS);
+    if(GetBits(IoApicVersion, 0, 8) == I440FX){
+        // Enable intel 440 FX APIC
+        unsigned int XBCS = ReadPci32(0, 1, 0, 0x4e);
+        XBCS |= 0x100;
+        WritePci32(0, 1, 0, 0x4e, XBCS);
+    }else{
+        // Enable QM intel APIC
+        unsigned int RCBA   = ReadPci32(0, 31, 0, 0xF0);
+        RCBA = RCBA & 0xffffc000;
+        unsigned short OIC    = *(unsigned short*)PHY_TO_VIRT(RCBA + 0x31FE);
+        mfence();
+        *(unsigned short*)PHY_TO_VIRT(RCBA + 0x31FE) = OIC | 0x100;
+        mfence();
+    }
 
     sti();
 }
