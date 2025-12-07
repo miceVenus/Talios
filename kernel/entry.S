@@ -241,6 +241,6 @@ error_code:
 
 ret_from_exception:
 
-    ENTRY(ret_from_intr)
+ENTRY(ret_from_intr)
 
-        jmp     restore_all
+    jmp     restore_all

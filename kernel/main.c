@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "8259a.h"
 #include "apic.h"
+#include "keyboard.h"
 #include "test/memory_test.h"
 
 void BRK(){
@@ -41,7 +42,11 @@ void main(){
         Init8259a();
     #endif
 
-    while (1);
+    KeyboardInit();
+
+    while (1){
+        AnalyzeKeyCode();
+    }
     
     TaskInit();
 }

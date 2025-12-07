@@ -25,4 +25,12 @@ typedef struct IrqDescT{
     unsigned long flags;
 }IrqDescT;
 
+int RegisterIrq(unsigned long irq, void *arg, void (*handler)(struct PtRegs* regs, unsigned long nr, unsigned long arg),
+                unsigned long parameter, HwInterruptT * controller, char *IrqName);
+
+int UnregisterIrq(unsigned long irq);
+
+void BuildController(HwInterruptT * Controller);
+
+
 #endif

@@ -27,6 +27,8 @@ typedef unsigned char uint8_t;
 
 #define cli()  __asm__ volatile("cli":::"memory")
 
+#define nop()  __asm__ volatile("nop":::"memory")
+
 #define mfence() __asm__ volatile("mfence":::"memory")
 
 #define GetCr3() ({ \
@@ -35,6 +37,9 @@ typedef unsigned char uint8_t;
     temp;})
 
 #define SetCr3(num) __asm__ volatile("movq %0, %%cr3"::"r"(num):"memory")
+
+#define OpenA20()   (OUT8b(0x64, 0xd1);OUT8b(0x60, 0xDF);)
+#define SysRestart()(OUT8b(0x64, 0xfe);)
 
 #define FlushTLB() ({   \
     unsigned long temp; \

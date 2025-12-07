@@ -2,6 +2,9 @@
 #include "gate.h"
 #include "printk.h"
 #include "interrupt.h"
+#include "memory.h"
+#include "apic.h"
+#include "8259a.h"
 #include "lib.h"
 
 #define SAVE_ALL_REGS    \
@@ -36,9 +39,9 @@
     void IRQ_NAME(nr);                                  \
     __asm__ (   SYMBOL_NAME_STR(IRQ)#nr"_interrupt:"    \
                 "pushq  $0x00;"                         \
-                "leaq   DoIRQ(%rip), %rax;"             \
                 "pushq  %rax;"                          \
                 SAVE_ALL_REGS                           \
+                "leaq   DoIRQ(%rip), %rax;"             \
                 "movq   %rsp,  %rdi;"                   \
                 "movq   $"#nr", %rsi;"                  \
                 "leaq   ret_from_intr(%rip), %rax;"     \
@@ -99,12 +102,73 @@ interrupt_t interrupt[NR_IRQS] = {
 
 IrqDescT InterruptDesc[NR_IRQS] = {0};
 
-int RegisterIrq(unsigned long irq, void *arg, void (*handler)(unsigned long rsp, unsigned long nr, unsigned long arg),
-                unsigned long flags, HwInterruptT * controller, unsigned long parameter, char *IrqName){
+void DefaultEnable(unsigned long irq){
+    #ifdef APIC
+        ApicEnable(irq);
+    #else
+        // Clear Mask Bit 8259a PIC
+        ClearMask8259a(irq - 0x20);
+    #endif
+}
+
+void DefaultAck(unsigned long irq){
+
+    #ifdef APIC
+        // Send EOI TO IOAPIC
+        ApicAck(irq);
+    #else
+        // Send EOI TO 8259a PIC
+        Ack8259a(irq);
+    #endif
+
+}
+
+void DefaultInstall(unsigned long irq, void * arg){
+    #ifdef APIC
+        // Enable Interrupt Vector[irq]
+        ApicInstall(irq, arg);
+    #else
+        // Send EOI TO 8259a PIC
+        ClearMask8259a(irq - 0x20);
+    #endif
+}
+
+void DefaultUninstall(unsigned long irq){
+    #ifdef APIC
+        ApicUninstall(irq);
+    #else
+        // Send EOI TO 8259a PIC
+        SetMask8259a(irq - 0x20);
+    #endif
+}
+void DefaultDisable(unsigned long irq){
+    #ifndef APIC
+        // disable Interrupt Vector[irq]
+        ApicDisable(irq);
+    #else
+        // Send EOI TO 8259a PIC
+        SetMask8259a(irq - 0x20);
+    #endif
+}
+
+
+void BuildController(HwInterruptT * Controller){
+
+    Controller->enable  = &DefaultEnable;
+    Controller->ack     = &DefaultAck;
+    Controller->disable = &DefaultDisable;
+    Controller->install = &DefaultInstall;
+    Controller->uninstall = &DefaultUninstall;
+
+}
+
+int RegisterIrq(unsigned long irq, void *arg, void (*handler)(struct PtRegs *regs, unsigned long nr, unsigned long arg),
+                unsigned long parameter, HwInterruptT * controller, char *IrqName){
     IrqDescT * p = &InterruptDesc[irq - 32];
+    p->handler = handler;
     p->parameter = parameter;
     p->IrqName = IrqName;
-    p->flags = flags;
+    p->flags = 0;
     p->controller = controller;
 
     p->controller->install(irq, arg);
@@ -134,13 +198,8 @@ void DoIRQ(struct PtRegs * regs, unsigned long nr){
 
     IrqDescT * irq = &InterruptDesc[nr - 32];
 
-    unsigned char x = IN8b(0x60);
-    ColorPrintfk(BLUE, BLACK, "get keyboard code %x\n", x);
-
     if(irq->handler != NULL) irq->handler(regs, nr, irq->parameter);
     if(irq->controller && irq->controller->ack) irq->controller->ack(nr);
-
-    wrmsr(0x80b, 0x0);
 
     // OUT8b(0x20, 0x20); // Send INTR To CPU R 8259a
 }

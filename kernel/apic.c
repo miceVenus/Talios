@@ -138,7 +138,8 @@ void IoApicPageTableRemap(){
     }
 
     tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + GetBits(IoApicAddr, PAGE_2M_SHIFT, 9);
-    SetPDE(tmp, IoApicMap.PhysicalAddr, 0x83);
+
+    SetPDE(tmp, IoApicMap.PhysicalAddr, 0x83 | 8 | 16);
 
     FlushTLB();
 
@@ -177,8 +178,6 @@ void InitIoApic(){
         SetIntrGate(i, 2, interrupt[i-32]);
     }
 
-    IoApicRteWrite(0x12, 0x21);
-
     OUT8b(0x21, 0xff);
     OUT8b(0xa1, 0xff);
 
@@ -186,9 +185,9 @@ void InitIoApic(){
 
     if(GetBits(IoApicVersion, 0, 8) == I440FX){
         // Enable intel 440 FX APIC
-        unsigned int XBCS = ReadPci32(0, 1, 0, 0x4e);
-        XBCS |= 0x100;
-        WritePci32(0, 1, 0, 0x4e, XBCS);
+        unsigned int XBCS = ReadPci32(0, 1, 0, 0x4c);
+        XBCS |= (1 << 24);
+        WritePci32(0, 1, 0, 0x4c, XBCS);
     }else{
         // Enable QM intel APIC
         unsigned int RCBA   = ReadPci32(0, 31, 0, 0xF0);
@@ -200,4 +199,30 @@ void InitIoApic(){
     }
 
     sti();
+}
+
+void ApicEnable(unsigned long irq){
+    unsigned long index = (irq << 1)- 0x30;
+    unsigned long value = IoApicRteRead(index);
+    IoApicRteWrite(index, value & (~0x10000));
+}
+
+void ApicAck(unsigned long irq){
+    wrmsr(EOIR_MSR, 0x0);
+}
+
+void ApicInstall(unsigned long irq, void * arg){
+    unsigned long value = (*(unsigned long*)arg);
+    unsigned long index = (irq << 1)- 0x30;
+    IoApicRteWrite(index, value);
+}
+
+void ApicUninstall(unsigned long irq){
+    unsigned long index = (irq << 1)- 0x30;
+    IoApicRteWrite(index, 0x10000);
+}
+void ApicDisable(unsigned long irq){
+    unsigned long index = (irq << 1)- 0x30;
+    unsigned long value = IoApicRteRead((irq << 1)- 0x30);
+    IoApicRteWrite(index, value | 0x10000);
 }
