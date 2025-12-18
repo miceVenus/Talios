@@ -358,7 +358,7 @@ void KeyboardInit(){
     KBIB->count = 0;
     memset(KBIB->buf, 0, KB_BUF_SIZE);
 
-    entry.vector = 0x21;
+    entry.vector        = 0x21;
     entry.DelivMode     = DELIV_M_FIXED;
     entry.DestMode      = DEST_M_PHYSICAL;
     entry.IntMask       = IOAPIC_INT_MASKED;

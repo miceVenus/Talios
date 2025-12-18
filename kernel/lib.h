@@ -81,12 +81,12 @@ static inline unsigned long rdmsr(unsigned long addr){
 }
 
 // must be num in ax and port in dx
-static inline void OUT8b(unsigned char port, unsigned char byte){
+static inline void OUT8b(unsigned int port, unsigned char byte){
     __asm__ volatile("outb %1, %%dx" : : "d"(port), "a"(byte): "memory");
 }
 
 
-static inline unsigned char IN8b(unsigned char port){
+static inline unsigned char IN8b(unsigned int port){
     unsigned char num;
     __asm__ volatile("inb %%dx, %0" :"=a"(num): "d"(port): "memory");
     return num;

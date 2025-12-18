@@ -7,25 +7,25 @@
 
 #define     TAB_WIDTH 8
 #define     MAX_BUFFER_LEN  4096
-#define     XCharResolution \
-            (screenInfo.XPixelResolution / screenInfo.charWidth)*screenInfo.charWidth
-#define     YCharResolution \
-            (screenInfo.YPixelResolution / screenInfo.charHeight)*screenInfo.charHeight
+#define     XCharResolution (screenInfo.XPixelResolution / screenInfo.charWidth)
+#define     YCharResolution (screenInfo.YPixelResolution / screenInfo.charHeight)
 
 ScreenInfo screenInfo;
 
 // This is a Simple PutChar For Auto Maintain screen info
-void AutoPutChar(char x, uint32_t fc, uint32_t bc);
-inline void AutoPutChar(char x, uint32_t fc, uint32_t bc){
+void AutoPutchar(char x, uint32_t fc, uint32_t bc);
+inline void AutoPutchar(char x, uint32_t fc, uint32_t bc){
+
     if(screenInfo.cursorX < XCharResolution){
         Putchar(x, fc, bc);
         screenInfo.cursorX++;
-    }else{ \
+    }else{ 
         screenInfo.cursorX = 0;
-        screenInfo.cursorY < YCharResolution ? screenInfo.YPixelResolution++ : 0;
+        screenInfo.cursorY < YCharResolution ? screenInfo.cursorY++ : 0;
         Putchar(x, fc, bc);
         screenInfo.cursorX++;
     }
+
 }
 
 int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
@@ -49,7 +49,7 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
             break;
 
         case '\n':
-            if(screenInfo.cursorY < (screenInfo.YPixelResolution / screenInfo.charHeight))
+            if(screenInfo.cursorY < YCharResolution)
                 screenInfo.cursorY++;
 
             screenInfo.cursorX = 0;
@@ -66,16 +66,17 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
             break;
 
         case '\\':
-            AutoPutChar('\\', ForeColor, BackColor);
+            AutoPutchar('\\', ForeColor, BackColor);
             break;
 
         default:
-            AutoPutChar(buffer[i], ForeColor, BackColor);
+            AutoPutchar(buffer[i], ForeColor, BackColor);
         }
     }
     return 0;
 }
 
+// Could Have Many features But I`m lazy now
 int VsPrintfk(char* buffer, const char* fmt, va_list args){
     
     char    CurrentChar  =  *(fmt++);
@@ -212,6 +213,7 @@ void Putchar(char character, uint32_t ForeColor, uint32_t BackColor){
     }
 }
 
+// There Need A Better Way to Get Resolution
 int PrintkInit(){
     screenInfo = (ScreenInfo){
         .XPixelResolution = 1440,

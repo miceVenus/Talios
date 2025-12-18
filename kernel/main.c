@@ -9,6 +9,7 @@
 #include "8259a.h"
 #include "apic.h"
 #include "keyboard.h"
+#include "floppy.h"
 #include "test/memory_test.h"
 
 void BRK(){
@@ -43,6 +44,7 @@ void main(){
     #endif
 
     KeyboardInit();
+    FloppyInit();
 
     while (1){
         AnalyzeKeyCode();
