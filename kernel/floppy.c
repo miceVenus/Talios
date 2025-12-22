@@ -3,6 +3,18 @@
 #include "interrupt.h"
 #include "lib.h"
 #include "printk.h"
+#include "dma.h"
+#include "memory.h"
+
+#define MT  0x80
+#define MFM 0x40
+#define SK  0x20
+
+#ifdef FLOPPY_DMA
+#define NON_DMA 0
+#else 
+#define NON_DMA 1
+#endif
 
 static HwInterruptT FloppyController;
 static FDCPort port;
@@ -97,47 +109,50 @@ void FloppySendAccessCmd(   unsigned char DriveNum, unsigned char cylinder, unsi
     FDCWriteByte(DataLength);
 }
 
-FDCStatus FloppyReadData(unsigned char DriveNum, unsigned char cylinder, unsigned char head, unsigned char sector, unsigned char *buffer)
-{
-    FDCStatus result = {0};
-    ReadFromFDC = 1;
-    ReceivedInterrupt = 0;
 
-    FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , 0x12, 0x1B, 0xff, FLOPPY_WRITE_DATA);
-
-    while(!ReceivedInterrupt) {
-        unsigned char msr = IN8b(port.MSR);
-        if((msr & 0xD0) == 0xD0) {
-            *(buffer++) = FDCReadByte();
+void FloppyHandleReadAccess(unsigned char DriveNum, unsigned char cylinder, unsigned char head, unsigned char sector, unsigned char * buffer){
+    if(NON_DMA){
+        FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , 0x12, 0x1B, 0xff, MT|MFM|SK|FLOPPY_READ_DATA);
+        while(!ReceivedInterrupt) {
+            unsigned char msr = IN8b(port.MSR);
+            if((msr & 0xD0) == 0xD0) {
+                *(buffer++) = FDCReadByte();
+            }
         }
+    }else{
+        // DMA Mode: 0x44 = Single Mode, Address Increment, Write Transfer (Device -> Memory)
+        isa_dma_init(2, VIRT_TO_PHY(buffer), 512, 0x44);
+        FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , 0x12, 0x1B, 0xff, MT|MFM|SK|FLOPPY_READ_DATA);
     }
-
-    result.st0      = FDCReadByte();
-    result.st1      = FDCReadByte();
-    result.st2      = FDCReadByte();
-    result.cylinder = FDCReadByte();
-    result.head     = FDCReadByte();
-    result.sector   = FDCReadByte();
-    result.st3      = FDCReadByte(); // In Actually st3 = SectorSize
-
-    return result;
 }
 
-FDCStatus FloppyWriteData(unsigned char DriveNum, unsigned char cylinder, unsigned char head, unsigned char sector, unsigned char *buffer)
+
+void FloppyHandleWriteAccess(unsigned char DriveNum, unsigned char cylinder, unsigned char head, unsigned char sector, unsigned char * buffer){
+    if(NON_DMA){
+        FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , SECTOR_PER_TRACK, 0x1B, 0xff, MT|MFM|FLOPPY_WRITE_DATA);
+        while(!ReceivedInterrupt) {
+            unsigned char msr = IN8b(port.MSR);
+            if((msr & 0xc0) == 0x80) {
+                FDCWriteByte(*(buffer++));
+            }
+        }
+    }else{
+        // DMA Mode: 0x48 = Single Mode, Address Increment, Read Transfer (Memory -> Device)
+        isa_dma_init(2, VIRT_TO_PHY(buffer), 512, 0x48);
+        FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , SECTOR_PER_TRACK, 0x1B, 0xff, MT|MFM|FLOPPY_WRITE_DATA);
+    }
+}
+
+
+FDCStatus FloppyAccessData( unsigned char DriveNum, unsigned char cylinder, unsigned char head, unsigned char sector, 
+                            unsigned char write, unsigned char *buffer)
 {
 
     FDCStatus result = {0};
-    ReadFromFDC = 1;
     ReceivedInterrupt = 0;
 
-    FloppySendAccessCmd(DriveNum, cylinder, head, sector, 0x2 , SECTOR_PER_TRACK, 0x1B, 0xff, FLOPPY_READ_DATA);
-
-    while(!ReceivedInterrupt) {
-        unsigned char msr = IN8b(port.MSR);
-        if((msr & 0xc0) == 0x80) {
-            FDCWriteByte(*(buffer++));
-        }
-    }
+    if(write)   FloppyHandleWriteAccess(DriveNum, cylinder, head, sector ,buffer);
+    else FloppyHandleReadAccess(DriveNum, cylinder, head, sector ,buffer);
 
     result.st0      = FDCReadByte();
     result.st1      = FDCReadByte();
@@ -145,7 +160,7 @@ FDCStatus FloppyWriteData(unsigned char DriveNum, unsigned char cylinder, unsign
     result.cylinder = FDCReadByte();
     result.head     = FDCReadByte();
     result.sector   = FDCReadByte();
-    result.st3      = FDCReadByte(); // In Actually st3 = SectorSize
+    result.st3      = FDCReadByte(); 
 
     return result;
 }
@@ -166,7 +181,7 @@ void FloppyReset(){
     OUT8b(port.CCR,0x00);	// 500Kbps -- for 1.44M floppy
 
     // configure the drive
-    FloppySpecify((8 << 4) | 0, (5 << 1) | 1);
+    FloppySpecify((8 << 4) | 0, (5 << 1) | NON_DMA);
 }
 
 
@@ -174,7 +189,7 @@ void FloppyHandler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
     ReceivedInterrupt = 1;
 
     // if(ReadFromFDC) *buffer = FDCReadByte();
-    ColorPrintfk(BLUE, BLACK, "1");
+    // ColorPrintfk(BLUE, BLACK, "1");
     // if(ReadFromFDC)
     // if(WriteToFDC) FDCWriteByte(*buffer);
 }
@@ -192,14 +207,14 @@ unsigned long CHS2LBA(CHS chs){
     return ((chs.cylinder * HEADS) + chs.head)*SECTOR_PER_TRACK + (chs.sector - 1);
 }
 
-void read(unsigned long lba, unsigned char * buffer){
+void floppy_read_sector(unsigned long lba, unsigned char * buffer){
     CHS chs = LBA2CHS(lba);
-    FloppyReadData(0, chs.cylinder, chs.head, chs.sector, buffer);
+    FloppyAccessData(0, chs.cylinder, chs.head, chs.sector, 0, buffer);
 }
 
-void write(unsigned long lba, unsigned char * buffer){
+void floppy_write_sector(unsigned long lba, unsigned char * buffer){
     CHS chs = LBA2CHS(lba);
-    FloppyWriteData(0, chs.cylinder, chs.head, chs.sector, buffer);
+    FloppyAccessData(0, chs.cylinder, chs.head, chs.sector, 1, buffer);
 }
 
 void FloppyInit(){

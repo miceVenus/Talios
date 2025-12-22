@@ -46,6 +46,20 @@ void main(){
     KeyboardInit();
     FloppyInit();
 
+    unsigned char * buffer = kmalloc(sizeof(char) * 1024, 0);
+    memset(buffer, 0, 1024);
+    floppy_read_sector(1024, buffer);
+    for(int i = 0; i < 1024; i++)
+        ColorPrintfk(BLUE, BLACK, "%d", buffer[0]);
+    ColorPrintfk(BLUE, BLACK, "\n1");
+    buffer[0] = 4;
+
+    floppy_write_sector(1024, buffer);
+    floppy_read_sector(1024, buffer);
+    for(int i = 0; i < 1024; i++)
+        ColorPrintfk(BLUE, BLACK, "%d", buffer[0]);
+
+
     while (1){
         AnalyzeKeyCode();
     }

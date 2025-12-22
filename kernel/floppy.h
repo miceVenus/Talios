@@ -60,8 +60,8 @@ typedef struct FDCStatus{
 }FDCStatus;
 
 
-void read(unsigned long lba, unsigned char * buffer);
-void write(unsigned long lba, unsigned char * buffer);
+void floppy_read_sector(unsigned long lba, unsigned char * buffer);
+void floppy_write_sector(unsigned long lba, unsigned char * buffer);
 
 void FloppyInit();
 

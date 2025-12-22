@@ -9,6 +9,7 @@ BOCHS 	:= 	bochs
 BOCHSFILE 	:= ./bochsrc.floppy
 
 PIC		:= 	APIC
+FLOPPY 	:= 	FLOPPY_DMA
 
 
 CPFLAGS :=  -I elf64-x86-64 -S -R ".eh_frame" -R ".comment"
@@ -17,7 +18,7 @@ CPFLAGS :=  -I elf64-x86-64 -S -R ".eh_frame" -R ".comment"
 # <stdbool.h>, <stddef.h>, <stdint.h>, and <stdnoreturn.h> could be useful in freestanding. 
 # You should be familiar with these headers as they contain useful declarations you shouldn't do yourself. 
 # GCC also comes with additional freestanding headers for CPUID, SSE and such.
-CFLAGS 		:= 	-mcmodel=large -fno-builtin -m64 -ffreestanding -g -Wall -Wextra -MMD -MP -O0 -fvar-tracking -D$(PIC)
+CFLAGS 		:= 	-mcmodel=large -fno-builtin -m64 -ffreestanding -g -Wall -Wextra -MMD -MP -O0 -fvar-tracking -D$(PIC) -D$(FLOPPY)
 
 LDFLAGS 	:=   -b elf64-x86-64 -z muldefs
 ASFLAGS 	:=  
