@@ -103,6 +103,14 @@ static inline unsigned int IN32b(unsigned int port){
     return num;
 }
 
+static inline void port_insw(void *buffer, unsigned int port, unsigned long num){
+    __asm__ volatile("rep insw":"+D"(buffer), "+c"(num):"d"(port):"memory");
+}
+
+static inline void port_outsw(void *buffer, unsigned int port, unsigned long num){
+    __asm__ volatile("rep outsw":"+D"(buffer), "+c"(num):"d"(port):"memory");
+}
+
 inline void ListInit(struct List *list){
     list->prev = list;
     list->next = list;

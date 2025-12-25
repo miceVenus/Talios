@@ -1,33 +1,41 @@
 #include "disk.h"
 #include "apic.h"
 #include "interrupt.h"
+#include "memory.h"
+#include "printk.h"
 
-static HwInterruptT disk_irq_controller;
 // DISK USE IRQ 14 OR 15
 
-enum MASTER_DISK_CMD{
-    MASTER_DISK_CMD_DATA = 0x1F0,
-    MASTER_DISK_CMD_ERROR_STATUS, // READ ONLY
-    MASTER_DISK_CMD_SECTOR_NUM,
-    MASTER_DISK_CMD_SECTOR,
-    MASTER_DISK_CMD_COLUMN1,
-    MASTER_DISK_CMD_COLUMN2,
-    MASTER_DISK_CMD_CONF_REGISTER,
-    MASTER_DISK_CMD_STATUS_CMD // STATUS FOR READ CMD FOR WRITE
+enum PRIMARY_CHANNEL_CMD{
+    PRIMARY_CHANNEL_CMD_DATA = 0x1F0,
+    PRIMARY_CHANNEL_CMD_ERROR_STATUS, // READ ONLY
+    PRIMARY_CHANNEL_CMD_SECTOR_NUM,
+    PRIMARY_CHANNEL_CMD_SECTOR,
+    PRIMARY_CHANNEL_CMD_COLUMN1,
+    PRIMARY_CHANNEL_CMD_COLUMN2,
+    PRIMARY_CHANNEL_CMD_CONF_REGISTER,
+    PRIMARY_CHANNEL_CMD_STATUS_CMD // STATUS FOR READ CMD FOR WRITE
 };
 
-enum SLAVE_DISK_CMD{
-    SLAVE_DISK_CMD_DATA = 0x170,
-    SLAVE_DISK_CMD_ERROR_STATUS, // READ ONLY
-    SLAVE_DISK_CMD_SECTOR_NUM,
-    SLAVE_DISK_CMD_SECTOR,
-    SLAVE_DISK_CMD_COLUMN1,
-    SLAVE_DISK_CMD_COLUMN2,
-    SLAVE_DISK_CMD_CONF_REGISTER,
-    SLAVE_DISK_CMD_STATUS_CMD // STATUS FOR READ CMD FOR WRITE
+enum SECONDARY_CHANNEL_CMD{
+    SECONDARY_CHANNEL_CMD_DATA = 0x170,
+    SECONDARY_CHANNEL_CMD_ERROR_STATUS, // READ ONLY
+    SECONDARY_CHANNEL_CMD_SECTOR_NUM,
+    SECONDARY_CHANNEL_CMD_SECTOR,
+    SECONDARY_CHANNEL_CMD_COLUMN1,
+    SECONDARY_CHANNEL_CMD_COLUMN2,
+    SECONDARY_CHANNEL_CMD_CONF_REGISTER,
+    SECONDARY_CHANNEL_CMD_STATUS_CMD // STATUS FOR READ CMD FOR WRITE
 };
 
 /*  
+    DISK_CMD_CONF_REGISTER
+    bit7 must be 1
+    bit6 means address mode 0 CHS mode 1 LBA mode
+    bit5 must be 1
+    bit4 0 means Master disk 1 means Slave disk
+    bit0~3 means Disk Head In CHS mode LBA(27:24) In LBA mode
+
     DISK_CMD_ERROR_STATUS
     bit7 = 1 bad sector
     bit6 = 1 unrestorable data error
@@ -43,12 +51,12 @@ enum SLAVE_DISK_CMD{
     DISK_CMD_STATUS_CMD for STATUS IS Same like 3f6/376
 */
 
-enum MASTER_DISK_CTRL{
-    MASTER_DISK_CTRL_STATUS_CTRL = 0x3F6, // STATUS FOR READ CMD FOR WRITE
+enum PRIMARY_CHANNEL_CTRL{
+    PRIMARY_CHANNEL_CTRL_STATUS_CTRL = 0x3F6, // STATUS FOR READ CMD FOR WRITE
 };
 
-enum SLAVE_DISK_CTRL{
-    SLAVE_DISK_CTRL_STATUS_CTRL = 0x376, // STATUS FOR READ CMD FOR WRITE
+enum SECONDARY_CHANNEL_CTRL{
+    SECONDARY_CHANNEL_CTRL_STATUS_CTRL = 0x376, // STATUS FOR READ CMD FOR WRITE
 };
 
 /*  
@@ -68,9 +76,184 @@ enum SLAVE_DISK_CTRL{
 #define DISK_STATUS_REQ     (1 << 3)
 #define DISK_STATUS_ERROR   (1 << 0)
 
-void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
+void ListInit(struct List * list);
+void ListBackAdd(struct List *list, struct List *new);
+int ListDelete(struct List *list);
+
+void read_handler(unsigned long nr, unsigned long arg);
+void write_handler(unsigned long nr, unsigned long arg);
+void other_handler();
+
+block_device_operation ide_device_operation = {
+    .close      = ide_close,
+    .ioctl      = ide_ioctl,
+    .open       = ide_open,
+    .transfer   = ide_transfer
+};
+
+request_queue disk_request_queue;
+
+unsigned int disk_flags = 0;
+
+static HwInterruptT disk_irq_controller;
+
+block_buffer_node * make_request(long cmd, unsigned long blocks, long count, unsigned char *buffer){
+   block_buffer_node * node =  (block_buffer_node*)kmalloc(sizeof(block_buffer_node), 0);
+   ListInit(&node->list);
+   
+   switch (cmd){
+        case ATA_READ_CMD:
+            node->cmd = ATA_READ_CMD;
+            node->end_handler = read_handler;
+            break;
+
+        case ATA_WRITE_CMD:
+            node->cmd = ATA_WRITE_CMD;
+            node->end_handler = write_handler;
+            break;
+
+        default:
+            node->cmd = cmd;
+            node->end_handler = other_handler;
+            break;
+   }
+   node->buffer = buffer;
+   node->count  = count;
+   node->lba    = blocks;
+
+   return node;
+}
+
+long cmd_out(){
+    block_buffer_node * node = ContainerOf(&disk_request_queue.queue_list, block_buffer_node, list);
+    disk_request_queue.in_using = node;
+    ListDelete(&disk_request_queue.queue_list);
+    disk_request_queue.block_request_count--;
+
+    while(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_BUSY)
+        nop();
+
+    switch (node->cmd){
+        case ATA_READ_CMD:
+            OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0x40);
+
+            OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 24, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 32, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 40, 8));
+
+            OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 16, 8));
+
+            while(!(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_READY))
+                nop();
+            
+            OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, node->cmd);
+
+            break;
+        
+        case ATA_WRITE_CMD:
+            OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0x40);
+
+
+            OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 24, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 32, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 40, 8));
+
+            OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 16, 8));
+
+            while(!(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_READY))
+                nop();
+            
+            OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, node->cmd);
+
+            while(!(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_REQ))
+                nop();
+
+            port_outsw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
+
+            break;
+        default:
+
+            ColorPrintfk(RED, BLACK, "UnKown CMD %x In cmd_out()", node->cmd);
+            break;
+    }
+}
+void submit(block_buffer_node * node){
+    disk_request_queue.block_request_count++;
+    ListBackAdd(&disk_request_queue.queue_list, &node->list);
+
+    if(disk_request_queue.in_using == NULL)
+        cmd_out();
+}
+
+void wait_for_finish(){
+    disk_flags = 1;
+    while(disk_flags)
+        nop();
+}
+long ide_close(){
 
 }
+
+long ide_open(){
+
+}
+
+long ide_ioctl(long cmd, long arg){
+
+}
+
+long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buffer){
+    block_buffer_node *node = NULL;
+
+    if(cmd != ATA_READ_CMD && cmd != ATA_WRITE_CMD) return 0;
+
+    node = make_request(cmd, blocks, count, buffer);
+    submit(node);
+    wait_for_finish();
+
+    return 1;
+}
+
+void end_request(){
+    disk_flags = 0;
+}
+
+void read_handler(unsigned long nr, unsigned long arg){
+    block_buffer_node *node = ((request_queue*)arg)->in_using;
+    if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
+        ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
+    }else
+        port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
+
+    end_request();
+}
+
+void write_handler(unsigned long nr, unsigned long arg){
+    block_buffer_node *node = ((request_queue*)arg)->in_using;
+    if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
+        ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
+    }
+
+    end_request();
+}
+
+void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
+    block_buffer_node *node = ((request_queue*)arg)->in_using;
+    node->end_handler(nr, arg);
+}
+
 void disk_init(){
     IoApicRetEntry entry;
     BuildController(&disk_irq_controller);
@@ -88,13 +271,14 @@ void disk_init(){
     entry.DestField.physical.physic_dst = 0;
     entry.DestField.physical.reserverd2 = 0;
 
-    RegisterIrq(0x2f, &entry, disk_irq_handler, 0, &disk_irq_controller, "disk1");
+    RegisterIrq(0x2f, &entry, disk_irq_handler, (unsigned long)(&disk_request_queue), &disk_irq_controller, "disk1");
 
-    OUT8b(SLAVE_DISK_CMD_ERROR_STATUS, 0);
-    OUT8b(SLAVE_DISK_CMD_SECTOR_NUM, 0);
-    OUT8b(SLAVE_DISK_CMD_SECTOR, 0);
-    OUT8b(SLAVE_DISK_CMD_COLUMN1, 0);
-    OUT8b(SLAVE_DISK_CMD_COLUMN2, 0);
-    OUT8b(SLAVE_DISK_CMD_CONF_REGISTER, 0);
-    OUT8b(SLAVE_DISK_CMD_STATUS_CMD, 0xec);
+    OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+    OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, 0);
+    OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, 0);
+    OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, 0);
+    OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, 0);
+    OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0);
+
+    OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, 0xec);
 }
