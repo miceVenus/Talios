@@ -30,9 +30,9 @@ enum SECONDARY_CHANNEL_CMD{
 
 /*  
     DISK_CMD_CONF_REGISTER
-    bit7 must be 1
+    bit7 must be 1 In LBA 28
     bit6 means address mode 0 CHS mode 1 LBA mode
-    bit5 must be 1
+    bit5 must be 1 In LBA 28
     bit4 0 means Master disk 1 means Slave disk
     bit0~3 means Disk Head In CHS mode LBA(27:24) In LBA mode
 
@@ -83,6 +83,9 @@ int ListDelete(struct List *list);
 void read_handler(unsigned long nr, unsigned long arg);
 void write_handler(unsigned long nr, unsigned long arg);
 void other_handler();
+void get_disk_id_handler(unsigned long nr, unsigned long arg);
+
+#include "lib.h"
 
 block_device_operation ide_device_operation = {
     .close      = ide_close,
@@ -93,7 +96,7 @@ block_device_operation ide_device_operation = {
 
 request_queue disk_request_queue;
 
-unsigned int disk_flags = 0;
+static unsigned int disk_flags = 0;
 
 static HwInterruptT disk_irq_controller;
 
@@ -112,6 +115,9 @@ block_buffer_node * make_request(long cmd, unsigned long blocks, long count, uns
             node->end_handler = write_handler;
             break;
 
+        case ATA_GET_DISK_ID_CMD:
+            node->cmd = ATA_GET_DISK_ID_CMD;
+            node->end_handler = get_disk_id_handler;
         default:
             node->cmd = cmd;
             node->end_handler = other_handler;
@@ -183,6 +189,24 @@ long cmd_out(){
             port_outsw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
 
             break;
+
+        case ATA_GET_DISK_ID_CMD:
+
+            OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0xe0);
+
+            OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 24, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 32, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 40, 8));
+
+            while(!(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_READY))
+                nop();
+
+            OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, node->cmd);
+
+            break;
+
         default:
 
             ColorPrintfk(RED, BLACK, "UnKown CMD %x In cmd_out()", node->cmd);
@@ -212,6 +236,19 @@ long ide_open(){
 
 long ide_ioctl(long cmd, long arg){
 
+    switch(cmd){
+    case ATA_GET_DISK_ID_CMD:
+        OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, cmd);
+        disk_device_info * device_info = (disk_device_info *)kmalloc(sizeof(disk_device_info), 0); 
+        block_buffer_node * node = make_request(cmd, 0, 0, device_info);
+        submit(node);
+        wait_for_finish();
+        return 1;
+    
+    default:
+        ColorPrintfk(RED, BLACK, "UnKown CMD %x In ide_ioctl()", cmd);
+        break;
+    }
 }
 
 long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buffer){
@@ -227,7 +264,23 @@ long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buf
 }
 
 void end_request(){
+    kfree(disk_request_queue.in_using);
+    disk_request_queue.in_using = NULL;
+
     disk_flags = 0;
+
+    if(disk_request_queue.block_request_count != 0)
+     cmd_out();
+}
+
+void get_disk_id_handler(unsigned long nr, unsigned long arg){
+    block_buffer_node * node = ((request_queue*)arg)->in_using;
+    if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
+        ColorPrintfk(RED, BLACK, "Get Disk Id Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
+    }else
+        port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
+
+    end_request();
 }
 
 void read_handler(unsigned long nr, unsigned long arg){
@@ -249,6 +302,10 @@ void write_handler(unsigned long nr, unsigned long arg){
     end_request();
 }
 
+void other_handler(unsigned long nr, unsigned long arg){
+
+}
+
 void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
     block_buffer_node *node = ((request_queue*)arg)->in_using;
     node->end_handler(nr, arg);
@@ -257,6 +314,11 @@ void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg)
 void disk_init(){
     IoApicRetEntry entry;
     BuildController(&disk_irq_controller);
+
+    disk_request_queue.block_request_count = 0;
+    ListInit(&disk_request_queue.queue_list);
+    disk_request_queue.in_using = NULL;
+    disk_flags = 0;
 
     entry.vector        = 0x2f;
     entry.DelivMode     = DELIV_M_FIXED;

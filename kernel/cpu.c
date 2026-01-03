@@ -1,8 +1,8 @@
 #include "cpu.h"
 #include "printk.h"
 #include "lib.h"
-void CPUID(     unsigned int mop, unsigned int sop, unsigned int* eax, 
-                unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
+// void CPUID(     unsigned int mop, unsigned int sop, unsigned int* eax, 
+//                 unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
 
 void CpuInit(){
 

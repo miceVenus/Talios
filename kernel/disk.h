@@ -6,7 +6,6 @@
 
 #define ATA_GET_DISK_ID_CMD 0xec
 
-
 #include "lib.h"
 
 typedef struct block_buffer_node{
@@ -21,12 +20,6 @@ typedef struct block_buffer_node{
 
 }block_buffer_node;
 
-typedef struct request_queue{
-    struct List queue_list;
-    block_buffer_node *in_using;
-    long block_request_count;
-
-}request_queue;
 
 typedef struct block_device_operation{
     long (*open)();
@@ -35,6 +28,15 @@ typedef struct block_device_operation{
     long (*transfer)(long cmd, unsigned long blocks, long count, unsigned char *buffer);
 
 }block_device_operation;
+
+
+typedef struct request_queue{
+    struct List queue_list;
+    block_buffer_node *in_using;
+    long block_request_count;
+
+}request_queue;
+
 
 typedef struct disk_device_info disk_device_info;
 
