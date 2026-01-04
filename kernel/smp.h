@@ -2,5 +2,6 @@
 #define SMP_H
 
 void smp_init();
+void start_smp();
 
 #endif

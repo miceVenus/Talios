@@ -3,6 +3,9 @@
 #include "printk.h"
 #include "lib.h"
 
+extern unsigned char _APU_boot_start[];
+extern unsigned char _APU_boot_end[];
+
 void smp_init(){
     unsigned int eax, ecx, ebx, edx;
 
@@ -22,5 +25,11 @@ void smp_init(){
                         GetBits(ecx, 8, 8), GetBits(eax, 0, 5), GetBits(ebx, 0, 8));
     }
     ColorPrintfk(   BLUE, BLACK, "x2APIC ID Level:(%x) \t x2APIC ID :%x\n", GetBits(ecx, 0, 8), edx);
+    memcopy(_APU_boot_start, (void *)(0xffff800000020000), (unsigned long)_APU_boot_end - (unsigned long)_APU_boot_start);
+}
 
+void start_smp(){
+    ColorPrintfk(BLUE, BLACK, "Here Printed By CPU1\n");
+    __asm__ volatile("hlt":::"memory");
+    
 }

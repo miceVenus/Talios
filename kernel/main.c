@@ -30,8 +30,6 @@ void main(){
         
     CpuInit();
 
-    smp_init();
-
     InitMemory();
 
     SlabCacheInit();
@@ -48,7 +46,8 @@ void main(){
 
     InitLocalApic();
 
-    *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
+
+    // *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
 
     // In order to start SMP Need To Init IPI
 
@@ -80,6 +79,7 @@ void main(){
         Vector bit 7 ~ 0 means page frame number that AP start From
     
     */
+    smp_init();
 
     // IPI INIT 
 

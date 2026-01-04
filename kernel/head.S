@@ -28,12 +28,17 @@ __start:
     movq    switch_seg(%rip),  %rax
     pushq   $0x8
     pushq   %rax
-    lretq
+    lretq                       # in order to change register cs
 
 switch_seg:
     .quad entry_64
 
 entry_64:
+
+    movq    $0x1b,  %rcx
+    rdmsr
+    bt      $8, %rax
+    jnc     smp_entry
 
     movq    $SelectorData64,    %rax
 
@@ -148,6 +153,16 @@ ignore_IDT:
     popq    %rbx
 
     iretq
+
+smp_entry:
+    movq    go_to_smp_kernel(%rip), %rax
+    pushq   $0x08
+    pushq   %rax
+    lretq
+
+go_to_smp_kernel:
+    .quad   start_smp
+
 # Page Table
 
 .align  8
@@ -261,10 +276,10 @@ IdtTable:
 
 .global     TssTable
 
-TssPtr:
+; TssPtr:
 
-    .word      TssLen - 1
-    .quad      TssTable
+;     .word      TssLen - 1
+;     .quad      TssTable
 
 .align 8
 TssTable:

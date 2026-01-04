@@ -1,4 +1,4 @@
-#include "linage.h"
+#include "linkage.h"
 
 .balign 0x1000
 
@@ -75,11 +75,11 @@ _APU_code32:
 
     # set page table
 
-    movl    $0x90000,   %eax,
+    movl    $0x90000,   %eax
     movl    %eax,    %cr3
 
     # enable long mode
-    movl    $0xC0000080,    %eax    
+    movl    $0xC0000080,    %ecx    
     rdmsr
 
     or      $0x00000100,    %eax
@@ -92,7 +92,7 @@ _APU_code32:
     bts     $31,    %eax        
     movl    %eax,   %cr0
 
-    ljmp    *(_APU_code64 - _APU_boot_base)(%esi)
+    ljmp    *(_APU_code64_vector - _APU_boot_base)(%esi)
 
 
 .code64
@@ -106,6 +106,9 @@ _APU_code64:
     movq    %rax,   %gs
     movq    %rax,   %es
 
+    movq    $0x100000, %rax
+    jmpq    *%rax
+    
     hlt
 
 
@@ -113,4 +116,42 @@ _APU_code64:
 
 _APU_tmp_idt:
     .word   0
-    .wr
+    .word   0
+
+.balign 4
+
+_APU_tmp_gdt:
+    .word _APU_tmp_gdt_end - _APU_tmp_gdt - 1   # 0
+    .long _APU_tmp_gdt - _APU_boot_base         # 2
+    .word 0                                     # 6
+    # above quad byte would be ignore in gdt
+    # and would be read by gdtr
+
+    .quad 0x00cf9a000000ffff  # 32 bit code segment # 8
+    .quad 0x00cf92000000ffff  # 32 bit data segment # 16
+    .quad 0x0020980000000000  # 64 bit code segment # 24
+    .quad 0x0000920000000000  # 64 bit data segment # 32
+
+_APU_tmp_gdt_end:
+
+.balign 4
+
+_APU_code32_vector:
+    .long _APU_code32 - _APU_boot_base
+    .word 0x08
+
+
+.balign 4
+
+_APU_code64_vector:
+    .long _APU_code64 - _APU_boot_base
+    .word 0x18
+
+_APU_boot_tmp_stack_start:
+    .org 0x400              # aligned and padding with 0x400
+
+_APU_boot_tmp_stack_end:
+
+ENTRY(_APU_boot_end)
+
+

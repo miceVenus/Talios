@@ -666,13 +666,13 @@ void InitMemory(){
 
     // Flush The Consistency Mapping 
 
-    unsigned long CR3 = GetCr3();
+    // unsigned long CR3 = GetCr3();
  
-    ColorPrintfk(BLUE, BLACK, "CR3 : %X ; PML4E : %X ; PDPTE : %X ; \n", CR3, *PHY_TO_VIRT(CR3), \
-                                                                        *PHY_TO_VIRT(*(PHY_TO_VIRT(CR3)) & (~0xff)));
-    *PHY_TO_VIRT(CR3 & (~0xfffUL)) = 0;
+    // ColorPrintfk(BLUE, BLACK, "CR3 : %X ; PML4E : %X ; PDPTE : %X ; \n", CR3, *PHY_TO_VIRT(CR3), \
+    //                                                                     *PHY_TO_VIRT(*(PHY_TO_VIRT(CR3)) & (~0xff)));
+    // *PHY_TO_VIRT(CR3 & (~0xfffUL)) = 0;
 
-    FlushTLB();
+    // FlushTLB();
 }
 
 void InitPageTable(){

@@ -93,8 +93,8 @@ run: all $(BOCHSFILE)
 .PHONY: debug
 debug: all $(BOCHSFILE)
 	./assmble.sh
-	sed -i 's/# gdbstub/gdbstub/g' $(BOCHSFILE)
-	$(BOCHS) -q -f $(BOCHSFILE)
+# 	sed -i 's/# gdbstub/gdbstub/g' $(BOCHSFILE)
+	$(BOCHS) -f $(BOCHSFILE) -debugger
 
 .PHONY: clean
 clean:
