@@ -7,81 +7,135 @@
 #include "pci.h"
 #include "memory.h"
 
+// corrected machine check error interrupt
+#define LAPIC_CMCI_REGISTER 0x82f
+
+#define LAPIC_TIMER_REGISTER 0x832
+#define LAPIC_THERMAL_MONITOR_REGISTER 0x833
+#define LAPIC_PERF_COUNTER_REGISTER 0x834
+#define LAPIC_LINT0_REGISTER 0x835
+#define LAPIC_LINT1_REGISTER 0x836
+#define LAPIC_ERROR_REGISTER 0x837
+
+#define L_APIC_BASE_EN_BIT (1UL << 10)
+#define L_APIC_BASE_EXTD_BIT (1UL << 11)
+
+
 extern interrupt_t interrupt[24];
 extern struct GlobalMemManager MMS;
+
 
 struct IoApicMap IoApicMap;
 
 void CPUID(  unsigned int mop, unsigned int sop, unsigned int* eax, 
         unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
 
-void InitLocalApic(){
+void enable_lapic(){
+    unsigned long lapic_base = rdmsr(0x1b);
+    lapic_base |= L_APIC_BASE_EN_BIT | L_APIC_BASE_EXTD_BIT;
+    wrmsr(0x1b, lapic_base);
+}
+
+unsigned long get_lapic_id(){
+    return rdmsr(0x802);
+}
+
+unsigned long get_lapic_version(){
+    return rdmsr(0x803);
+}
+
+void init_lapic_svr(){
+    // close EOI broadcast In bochs
+    wrmsr(0x80f, 0x1ff);
+}
+
+void set_lapic_tpr(unsigned long priority){
+    wrmsr(0x808, priority);
+}
+
+void set_lapic_lvt(unsigned long entry,unsigned long content){
+    wrmsr(entry, content);
+}
+
+void mask_lapic_lvt(unsigned long entry){
+    wrmsr(entry, 0x10000);
+}
+
+int check_apic_x2apic(){
     unsigned int eax, ebx, ecx, edx;
-    unsigned int x, y;
-    unsigned short HasApic;
-    unsigned short Hasx2Apic;
     CPUID(1, 0, &eax, &ebx, &ecx, &edx);
+    return (GetBits(edx, 9, 1) & GetBits(ecx, 21, 1));
+}
 
-    HasApic     = GetBits(edx, 9, 1);
-    Hasx2Apic   = GetBits(ecx, 21, 1);
 
-    ColorPrintfk(BLUE, BLACK, "Has Apic : %d, Has x2 Apic : %d\n", HasApic, Hasx2Apic);
+void InitLocalApic(){
+
+    // unsigned int x, y;
+    // unsigned short HasApic;
+    // unsigned short Hasx2Apic;
+
+    // HasApic     = GetBits(edx, 9, 1);
+    // Hasx2Apic   = GetBits(ecx, 21, 1);
+
+    // ColorPrintfk(BLUE, BLACK, "Has Apic : %d, Has x2 Apic : %d\n", HasApic, Hasx2Apic);
     
-    if(!(HasApic & Hasx2Apic)) return;
+
+    if(!check_apic_x2apic()){
+        ColorPrintfk(BLUE, BLACK, "This chip is not support for apic\n");
+        return;
+    }
 
     // INIT APIC BASE
-    __asm__ volatile(   "movq   $0x1b,  %%rcx   \n\t"
-                        "rdmsr                  \n\t"
-                        "bts    $10,    %%rax   \n\t"
-                        "bts    $11,    %%rax   \n\t"
-                        "wrmsr                  \n\t"
-                        "movq   $0x1b,  %%rcx   \n\t"
-                        "rdmsr                  \n\t":
-                        "=a"(x), "=d"(y)::"memory");
+
+    enable_lapic();
+    init_lapic_svr();
+
+    // __asm__ volatile(   "movq   $0x1b,  %%rcx   \n\t"
+    //                     "rdmsr                  \n\t"
+    //                     "bts    $10,    %%rax   \n\t"
+    //                     "bts    $11,    %%rax   \n\t"
+    //                     "wrmsr                  \n\t"
+    //                     "movq   $0x1b,  %%rcx   \n\t"
+    //                     "rdmsr                  \n\t":
+    //                     "=a"(x), "=d"(y)::"memory");
     
-    ColorPrintfk(BLUE, BLACK, "IA 32 APIC BASE : %X\n", (((unsigned long)y << 32) + x));
+    // ColorPrintfk(BLUE, BLACK, "IA 32 APIC BASE : %X\n", (((unsigned long)y << 32) + x));
 
-    // SHOW APIC ID
-    __asm__ volatile(   "movq   $0x802,  %%rcx  \n\t"
-                        "rdmsr                  \n\t":
-                        "=a"(x), "=d"(y)::"memory");
-    ColorPrintfk(BLUE, BLACK, "LOCAL APIC ID : %D\n", (((unsigned long)y << 32) + x));
+    // // SHOW APIC ID
+    // __asm__ volatile(   "movq   $0x802,  %%rcx  \n\t"
+    //                     "rdmsr                  \n\t":
+    //                     "=a"(x), "=d"(y)::"memory");
+    ColorPrintfk(BLUE, BLACK, "LOCAL APIC ID : %X\n", get_lapic_id());
 
-    // SHOW APIC VERSION
-    __asm__ volatile(   "movq   $0x803,  %%rcx  \n\t"
-                        "rdmsr                  \n\t":
-                        "=a"(x), "=d"(y)::"memory");
-    ColorPrintfk(BLUE, BLACK, "LOCAL APIC VERSION : %X\n", (((unsigned long)y << 32) + x));
+    // // SHOW APIC VERSION
+
+    // __asm__ volatile(   "movq   $0x803,  %%rcx  \n\t"
+    //                     "rdmsr                  \n\t":
+    //                     "=a"(x), "=d"(y)::"memory");
+
+    ColorPrintfk(BLUE, BLACK, "LOCAL APIC VERSION : %X\n", get_lapic_version());
 
     // MASK LVT
 
-    __asm__ volatile(   "movq   $0x82F,  %%rcx  \n\t"     // CMCI
-                        "wrmsr                  \n\t"
-                        "movq   $0x832,  %%rcx  \n\t"     // TIMER
-                        "wrmsr                  \n\t"
-                        "movq   $0x833,  %%rcx  \n\t"     // THERMAL MONITOR
-                        "wrmsr                  \n\t"
-                        "movq   $0x834,  %%rcx  \n\t"     // PERF COUNTER
-                        "wrmsr                  \n\t"
-                        "movq   $0x835,  %%rcx  \n\t"     // LINT0
-                        "wrmsr                  \n\t"
-                        "movq   $0x836,  %%rcx  \n\t"     // LINT1
-                        "wrmsr                  \n\t"
-                        "movq   $0x837,  %%rcx  \n\t"     // ERROR
-                        "wrmsr                  \n\t"::
-                        "a"(0x10000), "d"(0x0):"memory");
-    
-    // TPR
-    __asm__ volatile(   "movq   $0x808,  %%rcx  \n\t"
-                        "rdmsr                  \n\t":
-                        "=a"(x), "=d"(y)::"memory");
-    ColorPrintfk(BLUE, BLACK, "TPR : %D\n", (((unsigned long)y << 32) + x));
+    mask_lapic_lvt(LAPIC_CMCI_REGISTER);
+    mask_lapic_lvt(LAPIC_TIMER_REGISTER);
+    mask_lapic_lvt(LAPIC_THERMAL_MONITOR_REGISTER);
+    mask_lapic_lvt(LAPIC_PERF_COUNTER_REGISTER);
+    mask_lapic_lvt(LAPIC_LINT0_REGISTER);
+    mask_lapic_lvt(LAPIC_LINT1_REGISTER);
+    mask_lapic_lvt(LAPIC_ERROR_REGISTER);
 
-    // PPR
-    __asm__ volatile(   "movq   $0x80a,  %%rcx  \n\t"
-                        "rdmsr                  \n\t":
-                        "=a"(x), "=d"(y)::"memory");
-    ColorPrintfk(BLUE, BLACK, "PPR : %D\n", (((unsigned long)y << 32) + x));
+    // // TPR
+    // __asm__ volatile(   "movq   $0x808,  %%rcx  \n\t"
+    //                     "rdmsr                  \n\t":
+    //                     "=a"(x), "=d"(y)::"memory");
+    // ColorPrintfk(BLUE, BLACK, "TPR : %D\n", (((unsigned long)y << 32) + x));
+
+    // // PPR
+    // __asm__ volatile(   "movq   $0x80a,  %%rcx  \n\t"
+    //                     "rdmsr                  \n\t":
+    //                     "=a"(x), "=d"(y)::"memory");
+    // ColorPrintfk(BLUE, BLACK, "PPR : %D\n", (((unsigned long)y << 32) + x));
 }
 
 unsigned long IoApicRteRead(unsigned char index){

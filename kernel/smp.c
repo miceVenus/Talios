@@ -1,5 +1,6 @@
 #include "smp.h"
 #include "cpu.h"
+#include "apic.h"
 #include "printk.h"
 #include "lib.h"
 
@@ -29,7 +30,16 @@ void smp_init(){
 }
 
 void start_smp(){
-    ColorPrintfk(BLUE, BLACK, "Here Printed By CPU1\n");
-    __asm__ volatile("hlt":::"memory");
-    
+
+    if(!check_apic_x2apic()){
+        ColorPrintfk(BLUE, BLACK, "This chip is not support for apic\n");
+        hlt();
+    }
+
+    enable_lapic();
+    init_lapic_svr();
+
+    ColorPrintfk(BLUE, BLACK, "configuration finished in cpu : %X\n", get_lapic_id());
+
+    hlt();
 }

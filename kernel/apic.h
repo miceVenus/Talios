@@ -73,6 +73,15 @@ struct IoApicRetEntry{
 
 }__attribute__((packed));
 
+void enable_lapic();
+unsigned long get_lapic_id();
+unsigned long get_lapic_version();
+void init_lapic_svr();
+void set_lapic_tpr(unsigned long priority);
+void set_lapic_lvt(unsigned long entry,unsigned long content);
+void mask_lapic_lvt(unsigned long entry);
+int check_apic_x2apic();
+
 void InitLocalApic();
 void InitIoApic();
 void IoApicPageTableRemap();

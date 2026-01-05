@@ -29,6 +29,8 @@ typedef unsigned char uint8_t;
 
 #define nop()  __asm__ volatile("nop":::"memory")
 
+#define hlt()  __asm__ volatile("hlt":::"memory")
+
 #define mfence() __asm__ volatile("mfence":::"memory")
 
 #define GetCr3() ({ \

@@ -18,6 +18,9 @@ void BRK(){
 }
 extern struct GlobalMemManager MMS;
 void main(){
+
+    IcrEntry icr_entry = {0};
+
     PrintkInit();
     
     LTR(10);  // Check And Reloade TR
@@ -49,47 +52,29 @@ void main(){
 
     // *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
 
-    // In order to start SMP Need To Init IPI
-
-    /*
-
-        ICR IN MSR 0x830
-
-        delivery target In x2 APIC Is 63 ~ 32 In x APIC & APIC Is 63 ~ 56 
-
-        ShortHand In x2 APIC xAPIC APIC Is bit 19 ~ 18
-        00 No Short Hand
-        01 Only Self
-        10 Send To ALL (include self)
-        11 Send To ALL (exclude self)
-
-        Trigger Mode bit 15 0 means edge trigger 1 means level trigger
-        Drive Level bit 14 0 means invalid 1 means valid
-        Delivery Status bit 12 0 means free 1 means hangging
-        Target Mode bit 11 0 means physic mode 1 means logical mode
-
-        Deliver Mode 10~8 sames like APIC Delivery mode
-        000 Fixed
-        001 Lower Priority
-        010 SMI
-        100 NMI
-        101 INIT
-        110 Start UP
-
-        Vector bit 7 ~ 0 means page frame number that AP start From
-    
-    */
     smp_init();
 
     // IPI INIT 
 
-    wrmsr(0x830, 0xc4500);
+    icr_entry.vector = 0;
+    icr_entry.DelivMode = 0b101;
+    icr_entry.TarMode = 0;
+    icr_entry.Trigger = 0;
+    icr_entry.DelivStatus = 0;
+    icr_entry.short_hand = 0b11;
+    icr_entry.delivery_target.x2apic.target = 0;
+
+    wrmsr(0x830, *(unsigned long*)&icr_entry);
 
     // IPI START UP
-    wrmsr(0x830, 0xc4620);
 
+    icr_entry.vector = 0x20;
+    icr_entry.DelivMode = 0b110;
+
+    wrmsr(0x830, *(unsigned long*)&icr_entry);
     // Send again for Safety
-    wrmsr(0x830, 0xc4620);
+    wrmsr(0x830, *(unsigned long*)&icr_entry);
+
 
     KeyboardInit();
     FloppyInit();
