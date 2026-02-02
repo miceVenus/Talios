@@ -1,6 +1,10 @@
 #ifndef GATE_H
 #define GATE_H
 
+
+#include "lib.h"
+#include "printk.h"
+
 #define LTR(n) do{\
     unsigned long TR;\
     unsigned long Selector = (n << 3);\
@@ -32,6 +36,7 @@
                         : "rax", "rbx", "memory"); \
 } while(0)
 
+extern unsigned long GdtTable[];
 extern unsigned int TssTable[26];
 
 struct GateStruct{
@@ -54,7 +59,20 @@ static inline void SetTrapGate(unsigned int Num, char Ist, void* Addr){
     SetIdtGate(IdtTable + Num, 0x8F, Ist, Addr);  // P = 1 DPL = 0 GateType = 0b1111;
 }
 
-void SetTss(unsigned long rsp0,unsigned long rsp1,unsigned long rsp2,unsigned long ist1,\
+static inline void set_tss_descriptor(unsigned int n, void *addr){
+    unsigned int limit = 103;
+
+    // ColorPrintfk(BLUE, BLACK, "GDT : %X \n", GdtTable);
+    
+    
+    *(unsigned long *)(GdtTable + n) = (
+        GetBits((unsigned long)addr, 24, 8) << 56 | GetBits(limit, 16, 4) << 48 | (unsigned long)0x89 << 40 | \
+        GetBits((unsigned long)addr, 0, 24) << 16 | GetBits(limit, 0, 16));
+        
+    *(unsigned long *)(GdtTable + n + 1) = ((unsigned long)addr >> 32 & 0xffffffff);
+}
+
+void SetTss(unsigned int * TssTable, unsigned long rsp0,unsigned long rsp1,unsigned long rsp2,unsigned long ist1,\
             unsigned long ist2,unsigned long ist3,unsigned long ist4,unsigned long ist5,\
             unsigned long ist6,unsigned long ist7);
 

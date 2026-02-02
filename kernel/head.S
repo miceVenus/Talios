@@ -25,6 +25,12 @@ __start:
     movq    $0x101000,  %rax  # PML4 table physic address
     movq    %rax,   %cr3
 
+
+    movq    $0x1b,  %rcx
+    rdmsr
+    bt      $8, %rax
+    jnc     smp_entry
+
     movq    switch_seg(%rip),  %rax
     pushq   $0x8
     pushq   %rax
@@ -34,11 +40,6 @@ switch_seg:
     .quad entry_64
 
 entry_64:
-
-    movq    $0x1b,  %rcx
-    rdmsr
-    bt      $8, %rax
-    jnc     smp_entry
 
     movq    $SelectorData64,    %rax
 
@@ -155,6 +156,11 @@ ignore_IDT:
     iretq
 
 smp_entry:
+
+    lidt    IdtPtr(%rip)
+
+    movq    _stack_start(%rip),    %rsp
+    
     movq    go_to_smp_kernel(%rip), %rax
     pushq   $0x08
     pushq   %rax
@@ -245,7 +251,7 @@ GdtTable:
     .quad   0x00cf9a000000ffff  # Kernel Code Segment 32-bit Offset 0x38                        32
     .quad   0x00cf92000000ffff  # Kernel Data Segment 32-bit Offset 0x40                        32
 
-    .fill   10, 8, 0            # TSS Offset 0x50   jmp 0x9
+    .fill   100, 8, 0            # TSS Offset 0x50   jmp 0xa
 
 
 .set GdtLen,    . - GdtTable

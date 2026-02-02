@@ -3,11 +3,17 @@
 #include "apic.h"
 #include "printk.h"
 #include "lib.h"
+#include "gate.h"
+#include "spin_lock.h"
 
 extern unsigned char _APU_boot_start[];
 extern unsigned char _APU_boot_end[];
+extern unsigned int global_ap_index;
+
+SpinLock_T smp_lock;
 
 void smp_init(){
+    spin_lock_init(&smp_lock);
     unsigned int eax, ecx, ebx, edx;
 
     // Get Tapology Structure With Asmblycode CPUID
@@ -30,7 +36,7 @@ void smp_init(){
 }
 
 void start_smp(){
-
+    
     if(!check_apic_x2apic()){
         ColorPrintfk(BLUE, BLACK, "This chip is not support for apic\n");
         hlt();
@@ -39,7 +45,16 @@ void start_smp(){
     enable_lapic();
     init_lapic_svr();
 
+
     ColorPrintfk(BLUE, BLACK, "configuration finished in cpu : %X\n", get_lapic_id());
+
+    bochs_bp();
+    // spin_lock(&smp_lock);
+    LTR(10 + (global_ap_index * 2));
+    spin_unlock(&smp_lock);
+    // __asm__ volatile("xchg %bx, %bx");
+
+    // int x = 1/0;
 
     hlt();
 }

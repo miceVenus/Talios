@@ -37,6 +37,7 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
 
     va_end(args);
 
+    spin_lock(&screenInfo.lock);
     for(int i = 0, Offset; i < BufferLen; i++){
 
         switch (buffer[i]){
@@ -73,6 +74,7 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
             AutoPutchar(buffer[i], ForeColor, BackColor);
         }
     }
+    spin_unlock(&screenInfo.lock);
     return 0;
 }
 
@@ -222,7 +224,9 @@ int PrintkInit(){
         .cursorY = 0,
         .charWidth = 8,
         .charHeight = 16,
-        .framebuffer = (uint32_t*)0xffff800003000000
+        .framebuffer = (uint32_t*)0xffff800003000000,
     };
+
+    spin_lock_init(&screenInfo.lock);
     return 1;
 }

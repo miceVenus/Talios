@@ -1,6 +1,6 @@
 #include "gate.h"
 
-void SetTss(unsigned long rsp0,unsigned long rsp1,unsigned long rsp2,unsigned long ist1,\
+void SetTss(unsigned int * TssTable, unsigned long rsp0,unsigned long rsp1,unsigned long rsp2,unsigned long ist1,\
             unsigned long ist2,unsigned long ist3,unsigned long ist4,unsigned long ist5,\
             unsigned long ist6,unsigned long ist7){
     

@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 #include <stdarg.h>
+#include "spin_lock.h"
+
 
 enum COLOR{
     RED     = 0xFF0000,
@@ -20,6 +22,7 @@ typedef struct ScreenInfo{
     int charWidth;
     int charHeight;
 
+    SpinLock_T lock;
     uint32_t* framebuffer;
 }ScreenInfo;
 

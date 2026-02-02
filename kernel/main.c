@@ -16,7 +16,14 @@
 void BRK(){
 
 }
+
+extern unsigned long _stack_start;
+// extern unsigned int TssTable[];
 extern struct GlobalMemManager MMS;
+extern SpinLock_T smp_lock;
+
+unsigned int global_ap_index;
+
 void main(){
 
     IcrEntry icr_entry = {0};
@@ -25,7 +32,7 @@ void main(){
     
     LTR(10);  // Check And Reloade TR
 
-    SetTss( 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
+    SetTss( TssTable, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
             0xffff800000007c00, 0xffff800000007c00);
 
@@ -55,7 +62,6 @@ void main(){
     smp_init();
 
     // IPI INIT 
-
     icr_entry.vector = 0;
     icr_entry.DelivMode = 0b101;
     icr_entry.TarMode = 0;
@@ -66,16 +72,31 @@ void main(){
 
     wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-    // IPI START UP
+    for(global_ap_index = 1; global_ap_index < 4; global_ap_index++){
 
-    icr_entry.vector = 0x20;
-    icr_entry.DelivMode = 0b110;
+        spin_lock(&smp_lock);
 
-    wrmsr(0x830, *(unsigned long*)&icr_entry);
-    // Send again for Safety
-    wrmsr(0x830, *(unsigned long*)&icr_entry);
+        _stack_start = (unsigned long)kmalloc(STACK_SIZE, 0) + STACK_SIZE;
+        unsigned int * ap_tss = (unsigned int *)kmalloc(128, 0);
+        set_tss_descriptor(10 + (global_ap_index * 2), ap_tss);
+        SetTss( ap_tss, _stack_start, _stack_start, _stack_start, _stack_start, _stack_start, _stack_start,\
+                _stack_start, _stack_start, _stack_start, _stack_start);
 
+        // IPI START UP
+        icr_entry.short_hand = 0b00;
+        icr_entry.vector = 0x20;
+        icr_entry.DelivMode = 0b110;
+        icr_entry.delivery_target.x2apic.target = global_ap_index;
 
+        wrmsr(0x830, *(unsigned long*)&icr_entry);
+        // Send again for Safety
+        wrmsr(0x830, *(unsigned long*)&icr_entry);
+
+        spin_lock(&smp_lock);
+        spin_unlock(&smp_lock);
+    }
+
+    // int x = 1/ 0;
     KeyboardInit();
     FloppyInit();
 

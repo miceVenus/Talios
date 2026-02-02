@@ -33,6 +33,9 @@ typedef unsigned char uint8_t;
 
 #define mfence() __asm__ volatile("mfence":::"memory")
 
+#define bochs_bp() __asm__ volatile("xchg %bx, %bx")
+
+
 #define GetCr3() ({ \
     unsigned long temp;\
     __asm__ volatile("movq %%cr3, %0":"=r"(temp)::"memory");\
@@ -86,7 +89,6 @@ static inline unsigned long rdmsr(unsigned long addr){
 static inline void OUT8b(unsigned int port, unsigned char byte){
     __asm__ volatile("outb %1, %%dx" : : "d"(port), "a"(byte): "memory");
 }
-
 
 static inline unsigned char IN8b(unsigned int port){
     unsigned char num;

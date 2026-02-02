@@ -61,7 +61,7 @@ __asm__ (
 
 void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     InitTss[0].rsp0 = next -> thread -> rsp0;
-    SetTss( InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+    SetTss( (unsigned int *)&InitTss[0], InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
             InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
             InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
             InitTss[0].ist7);
@@ -222,7 +222,7 @@ void TaskInit(){
     InitLmm.EndBrk      =   MMS.EndBrk;
     InitLmm.StartStack  =   _stack_start;
 
-    SetTss( InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+    SetTss( (unsigned int *)&InitTss[0], InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
             InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
             InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
             InitTss[0].ist7);
