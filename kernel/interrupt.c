@@ -72,6 +72,16 @@ BUILD_IRQ(0x34);
 BUILD_IRQ(0x35);
 BUILD_IRQ(0x36);
 BUILD_IRQ(0x37);
+BUILD_IRQ(0xc8);
+BUILD_IRQ(0xc9);
+BUILD_IRQ(0xca);
+BUILD_IRQ(0xcb);
+BUILD_IRQ(0xcc);
+BUILD_IRQ(0xcd);
+BUILD_IRQ(0xce);
+BUILD_IRQ(0xcf);
+BUILD_IRQ(0xd0);
+BUILD_IRQ(0xd1);
     
 interrupt_t interrupt[NR_IRQS] = {
     IRQ0x20_interrupt,
@@ -100,7 +110,22 @@ interrupt_t interrupt[NR_IRQS] = {
     IRQ0x37_interrupt,
 };
 
+interrupt_t smp_interrupt[SMP_IPI_IRQS] = {
+    IRQ0xc8_interrupt,
+    IRQ0xc9_interrupt,
+    IRQ0xca_interrupt,
+    IRQ0xcb_interrupt,
+    IRQ0xcc_interrupt,
+    IRQ0xcd_interrupt,
+    IRQ0xce_interrupt,
+    IRQ0xcf_interrupt,
+    IRQ0xd0_interrupt,
+    IRQ0xd1_interrupt,
+};
+
 IrqDescT InterruptDesc[NR_IRQS] = {0};
+
+IrqDescT smp_ipi_desc[SMP_IPI_IRQS] = {0};
 
 void DefaultEnable(unsigned long irq){
     #ifdef APIC
@@ -196,10 +221,21 @@ int UnregisterIrq(unsigned long irq){
 // Uncompleted !!!!!
 void DoIRQ(struct PtRegs * regs, unsigned long nr){
 
-    IrqDescT * irq = &InterruptDesc[nr - 32];
+    IrqDescT * irq;
+
+    if(nr <= 0x80){
+        irq = &InterruptDesc[nr - 32];
+        ColorPrintfk(BLUE, BLACK, "normal have IRQ nr : %D", nr);
+    }else{
+        irq = &smp_ipi_desc[nr - 200];
+        ColorPrintfk(BLUE, BLACK, "smp ipi have IRQ nr : %D", nr);
+        wrmsr(EOIR_MSR, 0x0);
+    }
 
     if(irq->handler != NULL) irq->handler(regs, nr, irq->parameter);
     if(irq->controller && irq->controller->ack) irq->controller->ack(nr);
 
     // OUT8b(0x20, 0x20); // Send INTR To CPU R 8259a
+
+    bochs_bp();
 }

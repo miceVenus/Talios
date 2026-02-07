@@ -11,7 +11,10 @@
 #include "keyboard.h"
 #include "floppy.h"
 #include "smp.h"
+#include "time.h"
+#include "hpet.h"
 #include "test/memory_test.h"
+
 
 void BRK(){
 
@@ -21,6 +24,7 @@ extern unsigned long _stack_start;
 // extern unsigned int TssTable[];
 extern struct GlobalMemManager MMS;
 extern SpinLock_T smp_lock;
+extern Time global_time;
 
 unsigned int global_ap_index;
 
@@ -48,17 +52,18 @@ void main(){
 
     InitPageTable();
 
-    // #ifdef APIC
-    //     InitIoApic();
-    // #else
-    //     Init8259a();
-    // #endif
+    #ifdef APIC
+        InitIoApic();
+    #else
+        Init8259a();
+    #endif
 
     InitLocalApic();
 
 
     // *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
-
+    hpet_init();
+    
     smp_init();
 
     // IPI INIT 
@@ -112,6 +117,30 @@ void main(){
     // floppy_read_sector(1024, buffer);
     // for(int i = 0; i < 1024; i++)
     //     ColorPrintfk(BLUE, BLACK, "%d", buffer[0]);
+
+    icr_entry.vector = 0xc8;
+    icr_entry.delivery_target.x2apic.target = 1;
+    icr_entry.DelivMode = 0x0;
+    wrmsr(0x830, *(unsigned long*)&icr_entry);
+
+    icr_entry.vector = 0xc9;
+    wrmsr(0x830, *(unsigned long*)&icr_entry);
+
+    // unsigned long *test = (unsigned long *)PHY_TO_VIRT(0xfed00000);
+    // ColorPrintfk(RED, BLACK, "Test HPET: %X", *test);
+
+    // unsigned long *hpet_reg = (unsigned long *)PHY_TO_VIRT(0xfed00000);
+    // unsigned int period = (unsigned int)((*hpet_reg) >> 32); 
+
+    // unsigned long *hpet_config = (unsigned long *)PHY_TO_VIRT(0xfed00000 + 0x10);
+    // *hpet_config |= 0x1;
+
+    // unsigned long *hpet_counter = (unsigned long *)PHY_TO_VIRT(0xfed00000 + 0xf0);
+    // unsigned long now1 = *hpet_counter; // 得到当前的 64 位计数值
+
+    // unsigned long now2 = *hpet_counter; // 得到当前的 64 位计数值
+
+    // ColorPrintfk(RED, BLACK, "Time Now1 Time Now2: %X, %X\n", now1, now2);
 
 
     while (1){

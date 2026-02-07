@@ -59,6 +59,8 @@ typedef unsigned char uint8_t;
 
 #define GetBits(num, pos, count) ((num) >> (pos) & ((1UL << (count)) - 1))
 
+#define BCD_TO_BIN(value) (GetBits(value, 4, 4) * 10 + GetBits(value, 0, 4))
+
 // ONLY IN GNU C !!!!!!
 #define SwitchMem(Ptr1, Ptr2) ({\
         typeof(*(Ptr1)) Temp; \

@@ -2,6 +2,7 @@
 #define INTERRUPT_H
 
 #define NR_IRQS 24
+#define SMP_IPI_IRQS 10
 
 #include "task.h"
 
@@ -24,6 +25,10 @@ typedef struct IrqDescT{
     void (*handler)(struct PtRegs * regs, unsigned long nr, unsigned long arg);
     unsigned long flags;
 }IrqDescT;
+
+
+extern interrupt_t smp_interrupt[SMP_IPI_IRQS];
+extern IrqDescT smp_ipi_desc[SMP_IPI_IRQS];
 
 int RegisterIrq(unsigned long irq, void *arg, void (*handler)(struct PtRegs* regs, unsigned long nr, unsigned long arg),
                 unsigned long parameter, HwInterruptT * controller, char *IrqName);

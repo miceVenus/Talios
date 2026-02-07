@@ -5,6 +5,7 @@
 #include "lib.h"
 #include "gate.h"
 #include "spin_lock.h"
+#include "interrupt.h"
 
 extern unsigned char _APU_boot_start[];
 extern unsigned char _APU_boot_end[];
@@ -31,6 +32,12 @@ void smp_init(){
         ColorPrintfk(   BLUE, BLACK, "Local APIC ID Package_../Core_2/SMT_1, type(%x) \n Width:%x, num of logical processor:%x\n", 
                         GetBits(ecx, 8, 8), GetBits(eax, 0, 5), GetBits(ebx, 0, 8));
     }
+
+    for(int i = 200; i < 210; i++){
+        SetIntrGate(i, 2, smp_interrupt[i - 200]);
+    }
+    memset(smp_ipi_desc, 0, sizeof(IrqDescT) * SMP_IPI_IRQS);
+
     ColorPrintfk(   BLUE, BLACK, "x2APIC ID Level:(%x) \t x2APIC ID :%x\n", GetBits(ecx, 0, 8), edx);
     memcopy(_APU_boot_start, (void *)(0xffff800000020000), (unsigned long)_APU_boot_end - (unsigned long)_APU_boot_start);
 }
@@ -48,13 +55,15 @@ void start_smp(){
 
     ColorPrintfk(BLUE, BLACK, "configuration finished in cpu : %X\n", get_lapic_id());
 
-    bochs_bp();
     // spin_lock(&smp_lock);
     LTR(10 + (global_ap_index * 2));
     spin_unlock(&smp_lock);
     // __asm__ volatile("xchg %bx, %bx");
 
     // int x = 1/0;
+    sti();
 
-    hlt();
+    while (1){
+        hlt();
+    }
 }
