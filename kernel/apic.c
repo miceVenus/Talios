@@ -229,7 +229,7 @@ void InitIoApic(){
     }
 
     for(unsigned int i = 32; i < (32 + 24); i++){
-        SetIntrGate(i, 2, interrupt[i-32]);
+        SetIntrGate(i, 0, interrupt[i-32]); // we have softirq so.. it is possible that stack space could be overwrited when we set ist
     }
 
     OUT8b(0x21, 0xff);

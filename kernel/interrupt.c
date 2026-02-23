@@ -237,5 +237,5 @@ void DoIRQ(struct PtRegs * regs, unsigned long nr){
 
     // OUT8b(0x20, 0x20); // Send INTR To CPU R 8259a
 
-    bochs_bp();
+    // bochs_bp();
 }

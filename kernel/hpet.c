@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "time.h"
 #include "lib.h"
+#include "softirq.h"
 
 #define GCAP_ID 0x0
 #define GEN_CONF 0x10
@@ -36,12 +37,14 @@
 #define TIME7_COMP 0x1e8
 
 
+unsigned long volatile jiffies = 0;
 HwInterruptT hpet_controller;
 extern Time global_time;
 
 
 void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
-    ColorPrintfk(BLUE, BLACK, "HPET INTERRUPT\n");
+    jiffies++;
+    add_softirq_status(TIME_SIRQ);
 }
 
 void hpet_init(){

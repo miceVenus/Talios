@@ -34,5 +34,6 @@ typedef struct Time{
 
 
 void get_cmos_time(Time * time);
+void time_init();
 
 #endif

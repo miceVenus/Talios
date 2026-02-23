@@ -1,5 +1,7 @@
 #include "time.h"
 #include "lib.h"
+#include "printk.h"
+#include "softirq.h"
 
 #define CMOS_READ(index) ({         \
     OUT8b(0x70, 0x80 | (index));    \
@@ -7,6 +9,8 @@
 })
 
 Time global_time = {0};
+
+extern unsigned long jiffies;
 
 void get_cmos_time(Time * time){
 
@@ -24,3 +28,16 @@ void get_cmos_time(Time * time){
 
     sti();
 }
+
+
+// This is softirq
+
+void do_time(void *data){
+    ColorPrintfk(BLUE, BLACK, "(HPET:%D)", jiffies);
+}
+
+void time_init(){
+    jiffies = 0;
+    register_softirq(0, &do_time, NULL);
+}
+

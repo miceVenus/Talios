@@ -13,6 +13,7 @@
 #include "smp.h"
 #include "time.h"
 #include "hpet.h"
+#include "softirq.h"
 #include "test/memory_test.h"
 
 
@@ -59,10 +60,12 @@ void main(){
     #endif
 
     InitLocalApic();
+    softirq_init();
 
 
     // *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
     hpet_init();
+    time_init();
     
     smp_init();
 
