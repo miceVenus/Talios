@@ -69,6 +69,12 @@ typedef unsigned char uint8_t;
         *Ptr2 = Temp; })
 
 
+#define ContainerOf(ptr, type, member)   ({                             \
+    typeof(ptr) p = (ptr);                                              \
+    (type *)((unsigned long)p - (unsigned long)&(((type *)0)->member));  \
+})
+
+
 struct List{
     struct List *prev;
     struct List *next;

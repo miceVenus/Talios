@@ -1,6 +1,8 @@
-#ifndef TIME_H
-#define TIME_H
+#ifndef TIMER_H
+#define TIMER_H
 
+
+#include "lib.h"
 /*
     Real Time Clock (RTC)
     
@@ -32,6 +34,16 @@ typedef struct Time{
     unsigned int year;      // 0x09 + 0x32
 }Time;
 
+typedef struct timer_list{
+    struct List list;
+    unsigned long expire_jiffies;
+    void (*func)(void *data);
+    void *data;
+}timer_list;
+
+void init_timer(timer_list *timer, void (*func)(void *data), void *data, unsigned long expire_jiffies);
+void add_timer(timer_list *list);
+void delete_timer(timer_list *list);
 
 void get_cmos_time(Time * time);
 void time_init();

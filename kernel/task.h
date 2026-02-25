@@ -51,12 +51,6 @@
     .IoMapBaseAddr  = 0 \
 }
 
-#define ContainerOf(ptr, type, member)   ({                             \
-    typeof(ptr) p = (ptr);                                              \
-    (type *)((unsigned long)p - (unsigned long)&(((type *)0)->member));  \
-})
-
-
 #define CURRENT (GetCurrent())
 
 #define GET_CURRENT     \

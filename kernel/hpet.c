@@ -3,7 +3,7 @@
 #include "interrupt.h"
 #include "printk.h"
 #include "memory.h"
-#include "time.h"
+#include "timer.h"
 #include "lib.h"
 #include "softirq.h"
 
@@ -40,10 +40,14 @@
 unsigned long volatile jiffies = 0;
 HwInterruptT hpet_controller;
 extern Time global_time;
+extern timer_list timer_list_header;
 
+struct List *ListNext(struct List* list);
 
 void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
     jiffies++;
+
+    if(ContainerOf(ListNext(&timer_list_header.list), timer_list, list)->expire_jiffies <= jiffies)
     add_softirq_status(TIME_SIRQ);
 }
 

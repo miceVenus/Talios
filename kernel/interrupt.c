@@ -225,7 +225,7 @@ void DoIRQ(struct PtRegs * regs, unsigned long nr){
 
     if(nr <= 0x80){
         irq = &InterruptDesc[nr - 32];
-        ColorPrintfk(BLUE, BLACK, "normal have IRQ nr : %D", nr);
+        // ColorPrintfk(BLUE, BLACK, "normal have IRQ nr : %D", nr);
     }else{
         irq = &smp_ipi_desc[nr - 200];
         ColorPrintfk(BLUE, BLACK, "smp ipi have IRQ nr : %D", nr);

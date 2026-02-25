@@ -11,7 +11,7 @@
 #include "keyboard.h"
 #include "floppy.h"
 #include "smp.h"
-#include "time.h"
+#include "timer.h"
 #include "hpet.h"
 #include "softirq.h"
 #include "test/memory_test.h"
