@@ -4,6 +4,7 @@
 #include "printk.h"
 #include "memory.h"
 #include "timer.h"
+#include "task.h"
 #include "lib.h"
 #include "softirq.h"
 
@@ -49,6 +50,21 @@ void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
 
     if(ContainerOf(ListNext(&timer_list_header.list), timer_list, list)->expire_jiffies <= jiffies)
     add_softirq_status(TIME_SIRQ);
+
+    struct TaskStruct * current = CURRENT;
+
+    switch (current->priority){
+        case 0:
+        case 1:
+            current->vrun_time += 1;
+            break;
+
+        case 2:
+            current->vrun_time += 2;
+            break;
+    }
+
+    
 }
 
 void hpet_init(){

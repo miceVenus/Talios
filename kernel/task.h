@@ -6,19 +6,19 @@
 #define STACK_SIZE 32768
 #define MAX_SYS_CALL 128
 
-#define PF_KTHREAD 1
+
+// struct task_struct->flags
+#define PF_KTHREAD      (1UL << 0)
+#define NEED_SCHEDULE   (1UL << 1)
+
 #define NR_CPUS 16
 #define KERNEL_DS 0x10
 #define KERNEL_CS 0x08
 
-#ifndef NULL
-#define NULL 0UL
-#endif
-
 #define TATTR(flag) (1UL << flag)
 
 #define INIT_TASK(tsk) {    \
-    .state  =   TASK_UNINTERRPTABLE,    \
+    .state  =   TASK_UNINTERRUPTABLE,    \
     .flags  =   PF_KTHREAD,             \
     .lmm    =   &InitLmm,               \
     .thread =   &InitThread,            \
@@ -27,6 +27,7 @@
     .counter    = 1,                    \
     .signal     = 0,                    \
     .priority   = 0,                    \
+    .vrun_time  = 0,                    \
 }
 
 #define STOP   \
@@ -53,9 +54,11 @@
 
 #define CURRENT (GetCurrent())
 
-#define GET_CURRENT     \
-        "movq   %rsp,       %rbx    \n\t"\
-        "andq   $-32768,    %rbx    \n\t"
+
+#define GET_CURRENT(reg)                      \
+        movq   %rsp,       reg     \n\t       \
+        andq   $-32768,    reg     \n\t
+
 
 #define SWITCH_TO(prev, next)   \
     do{                         \
@@ -77,7 +80,7 @@
 
 enum TASK_STATE{
     TASK_RUNING = 0,
-    TASK_UNINTERRPTABLE
+    TASK_UNINTERRUPTABLE
 };
 
 enum TASK_FLAG{
@@ -114,9 +117,14 @@ struct ThreadStruct{
 
 };
 
-struct TaskStruct{
+#define TSK_STATE   0x0
+#define TSK_FLAGS   0x8
+#define TSK_SIGNAL  0x10
+
+typedef struct TaskStruct{
     volatile long state;
     unsigned long flags;
+    long signal;
 
     struct List             list;
     struct LocalMemManager* lmm;
@@ -126,9 +134,9 @@ struct TaskStruct{
 
     long pid;
     long counter;
-    long signal;
     long priority;
-};
+    long vrun_time;
+}TaskStruct;
 
 union TaskUnion{
 

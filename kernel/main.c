@@ -14,6 +14,7 @@
 #include "timer.h"
 #include "hpet.h"
 #include "softirq.h"
+#include "schedule.h"
 #include "test/memory_test.h"
 
 
@@ -60,12 +61,13 @@ void main(){
     #endif
 
     InitLocalApic();
+
     softirq_init();
 
 
     // *(unsigned char *)0xffff800000020000 = 0xf4; // hlt assistance processor
-    hpet_init();
-    time_init();
+
+    scheduler_init();
     
     smp_init();
 
@@ -105,50 +107,25 @@ void main(){
     }
 
     // int x = 1/ 0;
+    hpet_init();
+    time_init();
+
     KeyboardInit();
     FloppyInit();
 
-    // unsigned char * buffer = kmalloc(sizeof(char) * 1024, 0);
-    // memset(buffer, 0, 1024);
-    // floppy_read_sector(1024, buffer);
-    // for(int i = 0; i < 1024; i++)
-    //     ColorPrintfk(BLUE, BLACK, "%d", buffer[0]);
-    // ColorPrintfk(BLUE, BLACK, "\n1");
-    // buffer[0] = 4;
+    // icr_entry.vector = 0xc8;
+    // icr_entry.delivery_target.x2apic.target = 1;
+    // icr_entry.DelivMode = 0x0;
+    // wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-    // floppy_write_sector(1024, buffer);
-    // floppy_read_sector(1024, buffer);
-    // for(int i = 0; i < 1024; i++)
-    //     ColorPrintfk(BLUE, BLACK, "%d", buffer[0]);
+    // icr_entry.vector = 0xc9;
+    // wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-    icr_entry.vector = 0xc8;
-    icr_entry.delivery_target.x2apic.target = 1;
-    icr_entry.DelivMode = 0x0;
-    wrmsr(0x830, *(unsigned long*)&icr_entry);
-
-    icr_entry.vector = 0xc9;
-    wrmsr(0x830, *(unsigned long*)&icr_entry);
-
-    // unsigned long *test = (unsigned long *)PHY_TO_VIRT(0xfed00000);
-    // ColorPrintfk(RED, BLACK, "Test HPET: %X", *test);
-
-    // unsigned long *hpet_reg = (unsigned long *)PHY_TO_VIRT(0xfed00000);
-    // unsigned int period = (unsigned int)((*hpet_reg) >> 32); 
-
-    // unsigned long *hpet_config = (unsigned long *)PHY_TO_VIRT(0xfed00000 + 0x10);
-    // *hpet_config |= 0x1;
-
-    // unsigned long *hpet_counter = (unsigned long *)PHY_TO_VIRT(0xfed00000 + 0xf0);
-    // unsigned long now1 = *hpet_counter; // 得到当前的 64 位计数值
-
-    // unsigned long now2 = *hpet_counter; // 得到当前的 64 位计数值
-
-    // ColorPrintfk(RED, BLACK, "Time Now1 Time Now2: %X, %X\n", now1, now2);
-
+        
+    TaskInit();
 
     while (1){
         AnalyzeKeyCode();
     }
-    
-    TaskInit();
+
 }

@@ -10,12 +10,10 @@ struct  List* ListNext(struct List *list);
 void    ListForeAdd(struct List *new, struct List *list);
 
 
-struct LocalMemManager InitLmm;
+struct LocalMemManager InitLmm = {0};
 struct ThreadStruct InitThread;
 
 union TaskUnion InitTaskUnion __attribute__((__section__ (".data.init_task"))) = {INIT_TASK(InitTaskUnion.task)};
-
-struct LocalMemManager InitLmm = {0};
 
 struct ThreadStruct InitThread = {
     .rsp0   =   (unsigned long)(InitTaskUnion.stack + STACK_SIZE / sizeof(unsigned long)),
@@ -154,7 +152,7 @@ unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long a
     regs.cs     = KERNEL_CS;
     regs.rflag  = (1 << 9);
     regs.rip    = (unsigned long)KernelThreadFunc;
-    ColorPrintfk(BLUE, BLACK, "rip: %p\n", KernelThreadFunc);
+    // ColorPrintfk(BLUE, BLACK, "rip: %p\n", KernelThreadFunc);
 
     return DoFork(&regs, flag, 0, 0);
 }
@@ -174,7 +172,7 @@ unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lon
     ListInit(&tsk->list);
     ListForeAdd(&(CURRENT->list), &tsk->list);
     tsk->pid++;
-    tsk->state = TASK_UNINTERRPTABLE;
+    tsk->state = TASK_UNINTERRUPTABLE;
 
     tsk->thread = (struct ThreadStruct*)(tsk + 1);
     memcopy(regs, (void *)((unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs)), sizeof(struct PtRegs));

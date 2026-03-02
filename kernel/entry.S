@@ -1,5 +1,7 @@
 #include "linkage.h"
 
+#inlcude "task.h"
+
 R15 = 0x00
 R14 = 0x08
 R13 = 0x10
@@ -245,8 +247,17 @@ ENTRY(ret_from_intr)
     movq    $-1,                    %rcx
     testq   softirq_status(%rip),   %rcx
     jnz     softirq_handler
+    GET_CURRENT(%rbx)                            # TASK STRUCT STORED IN RBX
+    movq    TSK_FLAGS(%rbx),        %rcx
+    testq   $2,                     %rcx
+    jnz     reschedule
     jmp     restore_all
+
 
 softirq_handler:
     callq   do_softirq
+    jmp     restore_all
+
+reschedule:
+    callq   schedule
     jmp     restore_all

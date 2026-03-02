@@ -59,12 +59,11 @@ void add_timer(timer_list *timer){
     timer_list *tmp = ContainerOf(ListNext(&timer_list_header.list), timer_list, list);
 
     // here timer_list_header `s expire num is infinite so there is no end problem
-    // just for reading
-    while(tmp->expire_jiffies < timer->expire_jiffies && tmp->list.next != &timer_list_header.list){
+    while(tmp->expire_jiffies < timer->expire_jiffies){
         tmp = ContainerOf(ListNext(&tmp->list), timer_list, list);
     }
 
-    ListBackAdd(&tmp->list, &timer->list);
+    ListForeAdd(&timer->list, &tmp->list);
 }
 void delete_timer(timer_list *timer){
     ListDelete(&timer->list);
