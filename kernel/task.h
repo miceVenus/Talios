@@ -19,7 +19,7 @@
 
 #define INIT_TASK(tsk) {    \
     .state  =   TASK_UNINTERRUPTABLE,    \
-    .flags  =   PF_KTHREAD,             \
+    .flags  =   PF_KTHREAD, \
     .lmm    =   &InitLmm,               \
     .thread =   &InitThread,            \
     .AddrLimit  = 0xffff800000000000,   \
@@ -55,25 +55,22 @@
 #define CURRENT (GetCurrent())
 
 
-#define GET_CURRENT(reg)                      \
-        movq   %rsp,       reg     \n\t       \
-        andq   $-32768,    reg     \n\t
-
-
 #define SWITCH_TO(prev, next)   \
     do{                         \
         __asm__ volatile(       \
+            "xchg   %%bx, %%bx                    \n\t"           \
             "pushq  %%rax                       \n\t"           \
-            "movq   %%rsp,          %0          \n\t"           \
+            "movq   %%rsp,          (%0)        \n\t"           \
             "movq   %2,             %%rsp       \n\t"           \
             "leaq   1f(%%rip),      %%rax       \n\t"           \
-            "movq   %%rax,          %1          \n\t"           \
+            "movq   %%rax,          (%1)        \n\t"           \
             "pushq  %3                          \n\t"           \
             "jmp    __Switch_To                 \n\t"           \
             "1:                                 \n\t"           \
             "popq   %%rax                       \n\t"           \
-            :"=r"(prev->thread->rsp), "=r"(prev->thread->rip)                       \
-            :"r"(next->thread->rsp), "r"(next->thread->rip), "D"(prev), "S"(next)   \
+            :                                                   \
+            :"r"(&prev->thread->rsp), "r"(&prev->thread->rip),          \
+            "r"(next->thread->rsp), "r"(next->thread->rip), "D"(prev), "S"(next)   \
             :"memory", "rax");   \
     }while (0);
 
@@ -117,10 +114,8 @@ struct ThreadStruct{
 
 };
 
-#define TSK_STATE   0x0
-#define TSK_FLAGS   0x8
-#define TSK_SIGNAL  0x10
 
+// linkage.h have some definition of offset which is one-to-one correspondent with this struct
 typedef struct TaskStruct{
     volatile long state;
     unsigned long flags;
@@ -210,7 +205,6 @@ void    ret_from_intr(void);
 void    ret_system_call(void);
 void    KernelThreadFunc(void);
 void    __Switch_To(struct TaskStruct *prev, struct TaskStruct *next);
-void    KernelThreadFunc(void);
 
 
 /*          SYSCALL         */

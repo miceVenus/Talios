@@ -1,7 +1,5 @@
 #include "linkage.h"
 
-#inlcude "task.h"
-
 R15 = 0x00
 R14 = 0x08
 R13 = 0x10
@@ -26,6 +24,12 @@ CS = 0xa0
 RFLAGS = 0xa8
 OLDRSP = 0xb0
 OLDSS = 0xb8
+
+
+TSK_STATE = 0x0
+TSK_FLAGS = 0x8
+TSK_SIGNAL = 0x10
+
 
 ENTRY(Syscall)
     sti
@@ -83,7 +87,7 @@ ENTRY(ret_system_call)
     movq    %rax,   %es
     popq    %rax
     addq    $0x38,  %rsp
-
+    
     .byte   0x48
     sysexit
 

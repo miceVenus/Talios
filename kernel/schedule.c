@@ -1,31 +1,39 @@
 #include "schedule.h"
 #include "task.h"
 #include "lib.h"
+#include "printk.h"
 
 
 scheduler task_scheduler;
 extern union TaskUnion InitTaskUnion;
 
 struct List * ListNext(struct List *next);
-void ListDelete(struct List *list);
+int ListDelete(struct List *list);
 int ListIsEmpty(struct List * list);
 void ListForeAdd(struct List *new, struct List *list);
 
 struct TaskStruct * get_next_task(){
     TaskStruct * task = NULL;
-    if(ListIsEmpty(&task_scheduler.task_queue.list))
+
+    if(ListIsEmpty(&task_scheduler.task_queue.list)){
+        ColorPrintfk(BLUE, BLACK, "empty task queue");
         return &InitTaskUnion.task;
-    
-    task = ContainerOf(ListNext(&task->list), struct TaskStruct, list);
+    }
+
+    task = ContainerOf(ListNext(&task_scheduler.task_queue.list), struct TaskStruct, list);
     ListDelete(&task->list);
     task_scheduler.running_task_count -= 1;
+    
+        
     return task;
 }
 
 void insert_task_queue(TaskStruct * task){
     TaskStruct * tmp = ContainerOf(ListNext(&task_scheduler.task_queue.list), TaskStruct, list);
-    if(task == &InitTaskUnion.task)
+    if(task == &InitTaskUnion.task){
+        ColorPrintfk(BLUE, BLACK, "try to insert IDLE TASK\n");
         return;
+    }
     if(ListIsEmpty(&task_scheduler.task_queue.list)){
 
     }else{
@@ -42,7 +50,12 @@ void schedule(){
     current->flags &= (~NEED_SCHEDULE);
 
     struct TaskStruct *task = get_next_task();
+
     if(current->vrun_time >= task->vrun_time){
+        if(current == task){
+            // ColorPrintfk(BLUE, BLACK, "unnecessarily to schedule the same task\n");
+            return;
+        }
         if(current->state == TASK_RUNING)
             insert_task_queue(current);
         if(!task_scheduler.CPU_exec_task_jiffies){
@@ -56,7 +69,7 @@ void schedule(){
                     task_scheduler.CPU_exec_task_jiffies = 4 / task_scheduler.running_task_count * 3;
                     break;
             }
-
+            ColorPrintfk(BLUE, BLACK, "schedule happened, %X\n", &InitTaskUnion.task);
             SWITCH_TO(current, task);
         }
     }else{

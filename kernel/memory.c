@@ -690,19 +690,19 @@ void InitPageTable(){
 
             if(*tmp == 0){
                 void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-                SetPDPT(tmp, VIRT_TO_PHY(virtual), 0x3);
+                SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
             }
             tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
                     GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_1G_SHIFT, 9);
             
             if(*tmp == 0){
                 void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-                SetPD(tmp, VIRT_TO_PHY(virtual), 0x3);
+                SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
             }
 
             tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
                     GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_2M_SHIFT, 9);
-            SetPDE(tmp, page->PhyAddr, 0x83);
+            SetPDE(tmp, page->PhyAddr, PEA_USER_ENTRY);
         }
     }
 

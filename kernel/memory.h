@@ -47,9 +47,9 @@
 
 #define KMALLOC_SLAB_SIZE 16
 
-#define SetPDPT(PML4E, PDPT, flags) (*(PML4E) = ((PDPT) | (flags)))
-#define SetPD(PDPTE, PD, flags)     (*(PDPTE) = ((PD) | (flags)))
-#define SetPDE(PD, PDE, flags)      (*(PD) = ((PDE) | (flags)))
+#define SetPML4E(PML4, PML4E, flags)    (*(PML4) = ((PML4E) | (flags)))
+#define SetPDPTE(PDPT, PDPTE, flags)    (*(PDPT) = ((PDPTE) | (flags)))
+#define SetPDE(PD, PDE, flags)          (*(PD) = ((PDE) | (flags)))
 
 
 
@@ -76,6 +76,23 @@ enum PageAttribute{
 
     // SHARED PAGE
     PG_SHARED
+};
+
+enum PageTableEntryAttribute{
+    // 0 1    2   3   4   5  6  7       8  9 ~ 11
+    // P R/W  U/S PWT PCD A  D  PAT/PS  G  AVL
+
+    PEA_PRESENT             = (1UL << 0),
+    PEA_READ_WRITE          = (1UL << 1),
+    PEA_IS_USER             = (1UL << 2),
+    PEA_WRITE_THROUGH       = (1UL << 3),
+    PEA_CACHE_DISABLE       = (1UL << 4),
+    PEA_PAGE_SIZE           = (1UL << 7),
+
+    PEA_USER_TABLE          = PEA_PRESENT | PEA_READ_WRITE | PEA_IS_USER,
+    PEA_USER_ENTRY          = PEA_USER_TABLE | PEA_PAGE_SIZE, 
+    PEA_SUPERVISOR_TABLE    = PEA_PRESENT | PEA_READ_WRITE,
+    PEA_SUPERVISOR_ENTRY    = PEA_SUPERVISOR_TABLE | PEA_PAGE_SIZE
 };
 
 enum ZONE_INDEX{

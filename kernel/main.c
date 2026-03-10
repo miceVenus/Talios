@@ -107,6 +107,7 @@ void main(){
     }
 
     // int x = 1/ 0;
+    TaskInit();
     hpet_init();
     time_init();
 
@@ -121,8 +122,6 @@ void main(){
     // icr_entry.vector = 0xc9;
     // wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-        
-    TaskInit();
 
     while (1){
         AnalyzeKeyCode();

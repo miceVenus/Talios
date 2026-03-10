@@ -3,6 +3,14 @@
 #include "printk.h"
 #include "lib.h"
 #include "memory.h"
+#include "schedule.h"
+
+
+#define MSR_IA32_SYSENTER_CS    (0x174)
+#define MSR_IA32_SYSENTER_ESP   (0x175)
+#define MSR_IA32_SYSENTER_EIP   (0x176)
+
+
 
 void    ListInit(struct List *list);
 struct  TaskStruct * GetCurrent();
@@ -58,11 +66,15 @@ __asm__ (
             "   callq   DoExit      \n\t");
 
 void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
+    ColorPrintfk(BLUE, BLACK, "idle rip : %X\n", InitTaskUnion.task.thread->rip);
     InitTss[0].rsp0 = next -> thread -> rsp0;
-    SetTss( (unsigned int *)&InitTss[0], InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+    SetTss( TssTable, InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
             InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
             InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
             InitTss[0].ist7);
+    
+    wrmsr(MSR_IA32_SYSENTER_ESP, next->thread->rsp0);
+
     __asm__ volatile("movq %%fs,    %0" :"=r"(prev->thread->fs));
     __asm__ volatile("movq %%gs,    %0" :"=r"(prev->thread->gs));
 
@@ -71,17 +83,18 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
 
     ColorPrintfk(BLUE, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
     ColorPrintfk(BLUE, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
+    bochs_bp();
 }
 
 
 /*          SYSCALL         */
 unsigned long NoSystemCall(struct PtRegs* regs){
-    ColorPrintfk(RED, BLACK, "There Is No System Call %D \n", regs->rax);
+    ColorPrintfk(RED, BLACK, "There Is No System Call %X \n", regs->rax);
     return -1;
 }
 
 unsigned long SysPrint(struct PtRegs* regs){
-    ColorPrintfk(WHITE, BLACK, (char *)regs->rdi);
+    ColorPrintfk(WHITE, BLACK, "SYSPrint IS Running %X\n", (char *)regs->rdi);
     return 1;
 }
 
@@ -96,14 +109,16 @@ unsigned long SystemCallFunc(struct PtRegs* regs){
 
 
 void UserLevelFunc(){
+
     // Can`t Be Called
     // ColorPrintfk(BLUE, BLACK, "In User Level\n");
+    
     long ret = 0;
     __asm__ volatile(   "leaq sysexit_return_address(%%rip),   %%rdx    \n\t"
                         "movq   %%rsp,  %%rcx                           \n\t"
                         "sysenter                                       \n\t"
                         "sysexit_return_address:                        \n\t"
-                        :"=a"(ret):"0"(0):"memory");
+                        :"=a"(ret):"a"(0):"memory");
     while(1){
 
     };
@@ -117,6 +132,7 @@ unsigned long init(unsigned long arg){
 
     CURRENT->thread->rip = (unsigned long)ret_system_call;
     CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
+    CURRENT->flags = 0;
 
     regs = (struct PtRegs*)CURRENT->thread->rsp;
 
@@ -128,13 +144,37 @@ unsigned long init(unsigned long arg){
 }
 
 unsigned long DoExecve(struct PtRegs* regs){
-    regs->rdx   = 0x800000;   // RIP
-    regs->rcx   = 0xa00000;   // RSP
+    unsigned long addr = 0x800000;
+    unsigned long *tmp;
+    unsigned long *virtual = NULL;
+    struct Page *p = NULL;
+
+
+    regs->rdx   = addr;   // sysexit RIP
+    regs->rcx   = 0xa00000;   // sysexit RSP
     regs->rax   = 1;
     regs->es    = 0;
     regs->ds    = 0;
     ColorPrintfk(BLUE, BLACK, "execve is running\n");
-    memcopy(UserLevelFunc, (void *)0x800000, 1024);
+    unsigned long cr3 = GetCr3();
+    tmp = PHY_TO_VIRT((unsigned long *)((cr3 & (~0xfffUL))) + GetBits(addr, PAGE_GDT_SHIFT, 9));
+    virtual = kmalloc(PAGE_4K_SIZE, 0);
+    SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
+    tmp = PHY_TO_VIRT((unsigned long *)((*tmp & (~0xfffUL))) + GetBits(addr, PAGE_1G_SHIFT, 9));
+    virtual = kmalloc(PAGE_4K_SIZE, 0);
+    SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
+    tmp = PHY_TO_VIRT((unsigned long *)((*tmp & (~0xfffUL))) + GetBits(addr, PAGE_2M_SHIFT, 9));
+    
+    p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
+    SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
+
+    FlushTLB();
+
+    if(!(CURRENT->flags & PF_KTHREAD))
+        CURRENT->AddrLimit = 0xffff800000000000;
+
+    memcopy(UserLevelFunc, addr, 1024);
+
     return 0;
 }
 
@@ -172,6 +212,7 @@ unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lon
     ListInit(&tsk->list);
     ListForeAdd(&(CURRENT->list), &tsk->list);
     tsk->pid++;
+    tsk->priority = 2;
     tsk->state = TASK_UNINTERRUPTABLE;
 
     tsk->thread = (struct ThreadStruct*)(tsk + 1);
@@ -185,6 +226,7 @@ unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lon
         tsk->thread->rip = regs->rip = (unsigned long)ret_system_call;
     
     tsk->state = TASK_RUNING;
+    insert_task_queue(tsk);
 
     return 1;
 }
@@ -220,7 +262,7 @@ void TaskInit(){
     InitLmm.EndBrk      =   MMS.EndBrk;
     InitLmm.StartStack  =   _stack_start;
 
-    SetTss( (unsigned int *)&InitTss[0], InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
+    SetTss( TssTable, InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
             InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
             InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
             InitTss[0].ist7);
@@ -229,16 +271,16 @@ void TaskInit(){
 
     ListInit(&InitTaskUnion.task.list);
 
-    wrmsr(0x174, KERNEL_CS);
-    wrmsr(0x175, CURRENT->thread->rsp0);
-    wrmsr(0x176, (unsigned long)Syscall);
+    wrmsr(MSR_IA32_SYSENTER_CS, KERNEL_CS);
+    wrmsr(MSR_IA32_SYSENTER_ESP, CURRENT->thread->rsp0);
+    wrmsr(MSR_IA32_SYSENTER_EIP, (unsigned long)Syscall);
 
     // Second Process Should Be User State
     KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));
 
     InitTaskUnion.task.state = TASK_RUNING;
 
-    p = ContainerOf(ListNext(&CURRENT->list), struct TaskStruct, list);
+    // p = ContainerOf(ListNext(&task_scheduler.task_queue.list), struct TaskStruct, list);
 
-    SWITCH_TO(CURRENT, p);
+    // SWITCH_TO(CURRENT, p);
 }

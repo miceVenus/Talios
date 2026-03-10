@@ -3,6 +3,7 @@
 #include "printk.h"
 #include "memory.h"
 #include "softirq.h"
+#include "task.h"
 
 #define CMOS_READ(index) ({         \
     OUT8b(0x70, 0x80 | (index));    \

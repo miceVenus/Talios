@@ -7,6 +7,7 @@
 #include "task.h"
 #include "lib.h"
 #include "softirq.h"
+#include "schedule.h"
 
 #define GCAP_ID 0x0
 #define GEN_CONF 0x10
@@ -42,6 +43,7 @@ unsigned long volatile jiffies = 0;
 HwInterruptT hpet_controller;
 extern Time global_time;
 extern timer_list timer_list_header;
+extern scheduler task_scheduler;
 
 struct List *ListNext(struct List* list);
 
@@ -56,12 +58,18 @@ void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
     switch (current->priority){
         case 0:
         case 1:
+            task_scheduler.CPU_exec_task_jiffies -= 1;
             current->vrun_time += 1;
             break;
 
         case 2:
+            task_scheduler.CPU_exec_task_jiffies -= 2;
             current->vrun_time += 2;
             break;
+    }
+
+    if(task_scheduler.CPU_exec_task_jiffies <= 0){
+        CURRENT->flags |= NEED_SCHEDULE;
     }
 
     

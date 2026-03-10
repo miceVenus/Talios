@@ -11,9 +11,11 @@ typedef struct scheduler{
 
 }scheduler;
 
+extern scheduler task_scheduler;
 
 
 void schedule();
 void scheduler_init();
-
+struct TaskStruct * get_next_task();
+void insert_task_queue(TaskStruct * task);
 #endif

@@ -9,6 +9,7 @@ static inline void spin_lock_init(SpinLock_T *lock){
     lock->lock = 0;
 }
 
+// lock which is not allow re-entrying
 static inline void spin_lock(SpinLock_T *lock){
     __asm__ __volatile__(
         "1:             \n\t"
