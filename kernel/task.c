@@ -4,6 +4,7 @@
 #include "lib.h"
 #include "memory.h"
 #include "schedule.h"
+#include "smp.h"
 
 
 #define MSR_IA32_SYSENTER_CS    (0x174)
@@ -66,12 +67,14 @@ __asm__ (
             "   callq   DoExit      \n\t");
 
 void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
-    ColorPrintfk(BLUE, BLACK, "idle rip : %X\n", InitTaskUnion.task.thread->rip);
-    InitTss[0].rsp0 = next -> thread -> rsp0;
-    SetTss( TssTable, InitTss[0].rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
-            InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
-            InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
-            InitTss[0].ist7);
+    long cpu_id = smp_cpu_id();
+    int color   = cpu_id ? WHITE : BLUE;
+
+    InitTss[cpu_id].rsp0 = next -> thread -> rsp0;
+    SetTss( &InitTss[cpu_id], InitTss[cpu_id].rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
+            InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
+            InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
+            InitTss[cpu_id].ist7);
     
     wrmsr(MSR_IA32_SYSENTER_ESP, next->thread->rsp0);
 
@@ -81,8 +84,8 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     __asm__ volatile("movq %0,      %%fs":: "r"(next->thread->fs));
     __asm__ volatile("movq %0,      %%gs":: "r"(next->thread->gs));
 
-    ColorPrintfk(BLUE, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
-    ColorPrintfk(BLUE, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
+    ColorPrintfk(color, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
+    ColorPrintfk(color, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
     bochs_bp();
 }
 
@@ -213,6 +216,7 @@ unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lon
     ListForeAdd(&(CURRENT->list), &tsk->list);
     tsk->pid++;
     tsk->priority = 2;
+    tsk->cpu_id = smp_cpu_id();
     tsk->state = TASK_UNINTERRUPTABLE;
 
     tsk->thread = (struct ThreadStruct*)(tsk + 1);
@@ -250,6 +254,7 @@ void TaskInit(){
     extern unsigned long _stack_start;
 
     struct TaskStruct *p = NULL;
+    long cpu_id         = smp_cpu_id();
 
     InitLmm.pgd         =   (pml4t_t *)GetCr3();
     InitLmm.StartCode   =   MMS.StartCode;
@@ -262,12 +267,12 @@ void TaskInit(){
     InitLmm.EndBrk      =   MMS.EndBrk;
     InitLmm.StartStack  =   _stack_start;
 
-    SetTss( TssTable, InitThread.rsp0, InitTss[0].rsp1, InitTss[0].rsp2, 
-            InitTss[0].ist1, InitTss[0].ist2, InitTss[0].ist3,
-            InitTss[0].ist4, InitTss[0].ist5, InitTss[0].ist6,
-            InitTss[0].ist7);
+    SetTss( (unsigned int*)&InitTss[cpu_id], InitThread.rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
+            InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
+            InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
+            InitTss[cpu_id].ist7);
     
-    InitTss[0].rsp0 = InitThread.rsp0;
+    InitTss[cpu_id].rsp0 = InitThread.rsp0;
 
     ListInit(&InitTaskUnion.task.list);
 

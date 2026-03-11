@@ -27,6 +27,9 @@
 
     Vector bit 7 ~ 0 means page frame number that AP start From
 */
+
+#define smp_cpu_id() (CURRENT->cpu_id)
+
 typedef struct IcrEntry{
     unsigned int    vector      :8, //0~7
                     DelivMode   :3, //8~10

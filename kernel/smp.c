@@ -9,7 +9,6 @@
 
 extern unsigned char _APU_boot_start[];
 extern unsigned char _APU_boot_end[];
-extern unsigned int global_ap_index;
 
 SpinLock_T smp_lock;
 
@@ -56,8 +55,7 @@ void start_smp(){
     ColorPrintfk(BLUE, BLACK, "configuration finished in cpu : %X\n", get_lapic_id());
 
     // spin_lock(&smp_lock);
-    LTR(10 + (global_ap_index * 2));
-    spin_unlock(&smp_lock);
+    LTR(10 + (get_lapic_id() * 2));
     // __asm__ volatile("xchg %bx, %bx");
 
     // int x = 1/0;

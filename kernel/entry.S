@@ -29,6 +29,7 @@ OLDSS = 0xb8
 TSK_STATE = 0x0
 TSK_FLAGS = 0x8
 TSK_SIGNAL = 0x10
+TSK_PREEMPT = 0x18
 
 
 ENTRY(Syscall)
@@ -252,6 +253,14 @@ ENTRY(ret_from_intr)
     testq   softirq_status(%rip),   %rcx
     jnz     softirq_handler
     GET_CURRENT(%rbx)                            # TASK STRUCT STORED IN RBX
+
+    # Process that has spinlock is not allowed to be preempted
+
+    xchg    %bx, %bx
+    movq    TSK_PREEMPT(%rbx),      %rcx
+    cmpq    $0,                     %rcx
+    jne     restore_all
+
     movq    TSK_FLAGS(%rbx),        %rcx
     testq   $2,                     %rcx
     jnz     reschedule
@@ -260,6 +269,16 @@ ENTRY(ret_from_intr)
 
 softirq_handler:
     callq   do_softirq
+    GET_CURRENT(%rbx)                            # TASK STRUCT STORED IN RBX
+
+    # Process has spinlock is not allowed to be preempted
+    movq    TSK_PREEMPT(%rbx),      %rcx
+    cmpq    $0,                     %rcx
+    jne     restore_all
+
+    movq    TSK_FLAGS(%rbx),        %rcx
+    testq   $2,                     %rcx
+    jnz     reschedule
     jmp     restore_all
 
 reschedule:

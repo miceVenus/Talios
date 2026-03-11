@@ -103,7 +103,7 @@ void hpet_init(){
     *(unsigned long *)(hpet_addr + TIME0_CONF) = 0x004c;
     mfence();
 
-    *(unsigned long *)(hpet_addr + TIME0_COMP) = 10000000000;
+    *(unsigned long *)(hpet_addr + TIME0_COMP) = 1000000000;
     mfence();
 
     get_cmos_time(&global_time);

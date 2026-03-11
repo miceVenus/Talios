@@ -28,6 +28,8 @@
     .signal     = 0,                    \
     .priority   = 0,                    \
     .vrun_time  = 0,                    \
+    .preempt_count = 0,                 \
+    .cpu_id     = 0,                    \
 }
 
 #define STOP   \
@@ -120,6 +122,7 @@ typedef struct TaskStruct{
     volatile long state;
     unsigned long flags;
     long signal;
+    long preempt_count;
 
     struct List             list;
     struct LocalMemManager* lmm;
@@ -131,6 +134,7 @@ typedef struct TaskStruct{
     long counter;
     long priority;
     long vrun_time;
+    long cpu_id;
 }TaskStruct;
 
 union TaskUnion{

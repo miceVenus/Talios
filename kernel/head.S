@@ -79,7 +79,7 @@ setup_IDT:
     lidt    IdtPtr(%rip)
 
 setup_TSS64:
-	leaq	TssTable(%rip),	    %rdx
+	leaq	InitTss(%rip),	    %rdx
 	xorq	%rax,	    %rax
 	xorq	%rcx,	    %rcx
 	movq	$0x89,	    %rax
@@ -280,19 +280,19 @@ IdtTable:
 
 # Task State Segment Table (TSS)
 
-.global     TssTable
+; .global     TssTable
 
-; TssPtr:
+; ; TssPtr:
 
-;     .word      TssLen - 1
-;     .quad      TssTable
+; ;     .word      TssLen - 1
+; ;     .quad      TssTable
 
-.align 8
-TssTable:
+; .align 8
+; TssTable:
     
-    .fill   13, 8, 0
+;     .fill   13, 8, 0
 
-.set TssLen,     . - TssTable
+; .set TssLen,     . - TssTable
 
 ENTRY(_stack_start)
     .quad   InitTaskUnion + 32768

@@ -25,20 +25,19 @@ void BRK(){
 extern unsigned long _stack_start;
 // extern unsigned int TssTable[];
 extern struct GlobalMemManager MMS;
-extern SpinLock_T smp_lock;
 extern Time global_time;
-
-unsigned int global_ap_index;
+extern struct TssStruct InitTss[NR_CPUS];
 
 void main(){
 
     IcrEntry icr_entry = {0};
+    unsigned long ist_ptr = 0;
 
     PrintkInit();
     
     LTR(10);  // Check And Reloade TR
 
-    SetTss( TssTable, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
+    SetTss( (unsigned int *)&InitTss[0], _stack_start, _stack_start, _stack_start, 0xffff800000007c00,\
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,\
             0xffff800000007c00, 0xffff800000007c00);
 
@@ -46,13 +45,26 @@ void main(){
         
     CpuInit();
 
+    // memory init start
+
     InitMemory();
 
     SlabCacheInit();
 
-    // run_memory_tests();
-
     InitPageTable();
+
+    // memory init end
+
+    ist_ptr = (unsigned long)kmalloc(STACK_SIZE, 0) + STACK_SIZE;
+    ((struct TaskStruct*)(ist_ptr - STACK_SIZE))->cpu_id = 0;
+    InitTss[0].ist1 = ist_ptr;
+    InitTss[0].ist2 = ist_ptr;
+    InitTss[0].ist3 = ist_ptr;
+    InitTss[0].ist4 = ist_ptr;
+    InitTss[0].ist5 = ist_ptr;
+    InitTss[0].ist6 = ist_ptr;
+    InitTss[0].ist7 = ist_ptr;
+
 
     #ifdef APIC
         InitIoApic();
@@ -82,28 +94,31 @@ void main(){
 
     wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-    for(global_ap_index = 1; global_ap_index < 4; global_ap_index++){
+    for(unsigned long ap_index = 1; ap_index < 4; ap_index++){
 
-        spin_lock(&smp_lock);
+
+        memset(&InitTss[ap_index], 0, sizeof(struct TssStruct));
+        set_tss_descriptor(10 + (ap_index * 2), (unsigned int *)&InitTss[ap_index]);
 
         _stack_start = (unsigned long)kmalloc(STACK_SIZE, 0) + STACK_SIZE;
-        unsigned int * ap_tss = (unsigned int *)kmalloc(128, 0);
-        set_tss_descriptor(10 + (global_ap_index * 2), ap_tss);
-        SetTss( ap_tss, _stack_start, _stack_start, _stack_start, _stack_start, _stack_start, _stack_start,\
-                _stack_start, _stack_start, _stack_start, _stack_start);
+        ((struct TaskStruct*)(_stack_start - STACK_SIZE))->cpu_id = ap_index;
+
+        ist_ptr = (unsigned long)kmalloc(STACK_SIZE, 0) + STACK_SIZE;
+        ((struct TaskStruct*)(ist_ptr - STACK_SIZE))->cpu_id = ap_index;
+
+        SetTss( (unsigned int *)&InitTss[ap_index], _stack_start, _stack_start, _stack_start, ist_ptr, ist_ptr, ist_ptr,\
+                ist_ptr, ist_ptr, ist_ptr, ist_ptr);
 
         // IPI START UP
         icr_entry.short_hand = 0b00;
         icr_entry.vector = 0x20;
         icr_entry.DelivMode = 0b110;
-        icr_entry.delivery_target.x2apic.target = global_ap_index;
+        icr_entry.delivery_target.x2apic.target = ap_index;
 
         wrmsr(0x830, *(unsigned long*)&icr_entry);
         // Send again for Safety
         wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-        spin_lock(&smp_lock);
-        spin_unlock(&smp_lock);
     }
 
     // int x = 1/ 0;
