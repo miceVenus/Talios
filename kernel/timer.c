@@ -92,7 +92,7 @@ void time_init(){
     register_softirq(0, &do_time, NULL);
 
     timer_list *tmp = (timer_list*)kmalloc(sizeof(timer_list), 0);
-    init_timer(tmp, &test_timer, NULL, 5);
+    init_timer(tmp, &test_timer, NULL, 500);
     add_timer(tmp);
 }
 

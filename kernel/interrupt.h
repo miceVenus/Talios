@@ -33,7 +33,12 @@ extern IrqDescT smp_ipi_desc[SMP_IPI_IRQS];
 int RegisterIrq(unsigned long irq, void *arg, void (*handler)(struct PtRegs* regs, unsigned long nr, unsigned long arg),
                 unsigned long parameter, HwInterruptT * controller, char *IrqName);
 
+int regitser_ipi(unsigned long irq, void *arg, void (*handler)(struct PtRegs *regs, unsigned long nr, unsigned long arg),
+                unsigned long parameter, HwInterruptT * controller, char *IrqName);
+
 int UnregisterIrq(unsigned long irq);
+
+int unregister_ipi(unsigned long irq);
 
 void BuildController(HwInterruptT * Controller);
 

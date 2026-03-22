@@ -14,6 +14,8 @@
 #define NR_CPUS 16
 #define KERNEL_DS 0x10
 #define KERNEL_CS 0x08
+#define USER_DS     0x30
+#define USER_CS     0x28
 
 #define TATTR(flag) (1UL << flag)
 
@@ -60,7 +62,6 @@
 #define SWITCH_TO(prev, next)   \
     do{                         \
         __asm__ volatile(       \
-            "xchg   %%bx, %%bx                    \n\t"           \
             "pushq  %%rax                       \n\t"           \
             "movq   %%rsp,          (%0)        \n\t"           \
             "movq   %2,             %%rsp       \n\t"           \

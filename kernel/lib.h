@@ -68,6 +68,8 @@ typedef unsigned char uint8_t;
         *Ptr1 = *Ptr2; \
         *Ptr2 = Temp; })
 
+#define max(value1, value2) ((value1) >= (value2) ? (value1) : (value2))
+#define min(value1, value2) ((value1) >= (value2) ? (value2) : (value1))
 
 #define ContainerOf(ptr, type, member)   ({                             \
     typeof(ptr) p = (ptr);                                              \
@@ -163,6 +165,17 @@ inline int ListDelete(struct List *list){
     list->prev->next = list->next;
     list->next->prev = list->prev;
     return 1;
+}
+
+
+inline unsigned long get_rflags()
+{
+	unsigned long tmp = 0;
+	__asm__ __volatile__	("pushfq	\n\t"
+				 "movq	(%%rsp), %0	\n\t"
+				 "popfq	\n\t"
+				:"=r"(tmp)::"memory");
+	return tmp;
 }
 
 

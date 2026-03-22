@@ -23,7 +23,9 @@ void DoDivideError(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(RED, BLACK, "Bad Division(0) In RIP: %p, RSP: %p, ERRCODE: %x \n", \
         rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 
 
@@ -48,7 +50,9 @@ void DoInvalidTss(unsigned long rsp, unsigned long ErroCode){
     }else{
         ColorPrintfk(RED, BLACK, "Refers To The Descriptor In The Gate GDT Index In: %x \n", Index);
     }
-    while(1);   
+    while(1){
+        hlt();
+    }
 }
 
 
@@ -92,7 +96,9 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 
     ColorPrintfk(RED, BLACK, "Page Fault Addr: %p \n", (void*)cr2);
 
-    while(1);   
+    while(1){
+        hlt();
+    }
 }
 
 
@@ -100,32 +106,42 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 void DoNmi(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(0xFF0000, 0x0000, "Bad Division In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 
 
 void DoGeneralPurpose(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(0xFF0000, 0x0000, "GPF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 
 
 void DoDoubleFault(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(0xFF0000, 0x0000, "DF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 
 void DoAlignmentCheckFault(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(0xFF0000, 0x0000, "ACF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 
 void DoUndefinedOpcodeFault(unsigned long rsp, unsigned long ErroCode){
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(0xFF0000, 0x0000, "UOF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
-    while(1);
+    while(1){
+        hlt();
+    }
 }
 

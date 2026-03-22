@@ -28,6 +28,7 @@
     Vector bit 7 ~ 0 means page frame number that AP start From
 */
 
+#define MSR_ICR         0x830
 #define smp_cpu_id() (CURRENT->cpu_id)
 
 typedef struct IcrEntry{
@@ -58,5 +59,6 @@ typedef struct IcrEntry{
 
 void smp_init();
 void start_smp();
+void interrupt_cpu(unsigned long nr, unsigned long cpu);
 
 #endif

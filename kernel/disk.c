@@ -79,6 +79,7 @@ enum SECONDARY_CHANNEL_CTRL{
 void ListInit(struct List * list);
 void ListBackAdd(struct List *list, struct List *new);
 int ListDelete(struct List *list);
+void ListForeAdd(struct List *new, struct List *list);
 
 void read_handler(unsigned long nr, unsigned long arg);
 void write_handler(unsigned long nr, unsigned long arg);
@@ -102,7 +103,8 @@ static HwInterruptT disk_irq_controller;
 
 block_buffer_node * make_request(long cmd, unsigned long blocks, long count, unsigned char *buffer){
    block_buffer_node * node =  (block_buffer_node*)kmalloc(sizeof(block_buffer_node), 0);
-   ListInit(&node->list);
+   wait_queue_init(&node->wait_queue, NULL);
+   node->wait_queue.tsk = CURRENT;
    
    switch (cmd){
         case ATA_READ_CMD:
@@ -131,9 +133,10 @@ block_buffer_node * make_request(long cmd, unsigned long blocks, long count, uns
 }
 
 long cmd_out(){
-    block_buffer_node * node = ContainerOf(&disk_request_queue.queue_list, block_buffer_node, list);
+    wait_queue_t *tmp = ContainerOf(ListNext(&disk_request_queue.queue_list.wait_list), wait_queue_t, wait_list);
+    block_buffer_node * node = ContainerOf(tmp, block_buffer_node, wait_queue);
     disk_request_queue.in_using = node;
-    ListDelete(&disk_request_queue.queue_list);
+    ListDelete(&node->wait_queue.wait_list);
     disk_request_queue.block_request_count--;
 
     while(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_BUSY)
@@ -195,10 +198,10 @@ long cmd_out(){
             OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0xe0);
 
             OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
-            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 8, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 24, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 32, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 40, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 0, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 8, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 16, 8));
 
             while(!(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_READY))
                 nop();
@@ -215,16 +218,18 @@ long cmd_out(){
 }
 void submit(block_buffer_node * node){
     disk_request_queue.block_request_count++;
-    ListBackAdd(&disk_request_queue.queue_list, &node->list);
-
+    ListForeAdd(&node->wait_queue.wait_list, &disk_request_queue.queue_list.wait_list);
     if(disk_request_queue.in_using == NULL)
         cmd_out();
 }
 
 void wait_for_finish(){
-    disk_flags = 1;
-    while(disk_flags)
-        nop();
+    CURRENT->state = TASK_UNINTERRUPTABLE;
+
+    // In CFS process preempted because of IO would discard its jiffies  
+    task_schedulers->CPU_exec_task_jiffies = 0;
+    // ColorPrintfk(BLUE, BLACK, "%X\n", disk_request_queue.in_using);
+    schedule();
 }
 long ide_close(){
 
@@ -259,18 +264,23 @@ long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buf
     node = make_request(cmd, blocks, count, buffer);
     submit(node);
     wait_for_finish();
-
     return 1;
 }
 
-void end_request(){
+void end_request(struct block_buffer_node *node){
+    if(node == NULL) ColorPrintfk(RED, BLACK, "bad end request!!!\n");
+
     kfree(disk_request_queue.in_using);
     disk_request_queue.in_using = NULL;
 
     disk_flags = 0;
-
     if(disk_request_queue.block_request_count != 0)
-     cmd_out();
+        cmd_out();
+
+    node->wait_queue.tsk->state = TASK_RUNING;
+    node->wait_queue.tsk->flags |= NEED_SCHEDULE;
+    node->wait_queue.tsk->vrun_time = max(node->wait_queue.tsk->vrun_time, task_schedulers[CURRENT->cpu_id].min_vrun_time - 2);
+    insert_task_queue(node->wait_queue.tsk);
 }
 
 void get_disk_id_handler(unsigned long nr, unsigned long arg){
@@ -280,17 +290,21 @@ void get_disk_id_handler(unsigned long nr, unsigned long arg){
     }else
         port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
 
-    end_request();
+    end_request(node);
 }
 
 void read_handler(unsigned long nr, unsigned long arg){
     block_buffer_node *node = ((request_queue*)arg)->in_using;
     if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
         ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
-    }else
+    }else if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_REQ){
         port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
+    }else{
+        ColorPrintfk(RED, BLACK, "Read Handler Error : No Data To Be Read");
+    }
+        
 
-    end_request();
+    end_request(node);
 }
 
 void write_handler(unsigned long nr, unsigned long arg){
@@ -299,7 +313,7 @@ void write_handler(unsigned long nr, unsigned long arg){
         ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
     }
 
-    end_request();
+    end_request(node);
 }
 
 void other_handler(unsigned long nr, unsigned long arg){
@@ -313,10 +327,12 @@ void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg)
 
 void disk_init(){
     IoApicRetEntry entry;
+    unsigned char buf[512];
     BuildController(&disk_irq_controller);
 
     disk_request_queue.block_request_count = 0;
-    ListInit(&disk_request_queue.queue_list);
+    wait_queue_init(&disk_request_queue.queue_list, NULL);
+
     disk_request_queue.in_using = NULL;
     disk_flags = 0;
 
@@ -335,12 +351,4 @@ void disk_init(){
 
     RegisterIrq(0x2f, &entry, disk_irq_handler, (unsigned long)(&disk_request_queue), &disk_irq_controller, "disk1");
 
-    OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
-    OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, 0);
-    OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, 0);
-    OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, 0);
-    OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, 0);
-    OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0);
-
-    OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, 0xec);
 }

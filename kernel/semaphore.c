@@ -43,7 +43,12 @@ void semaphore_release(semaphore_t *semaphore){
         __release(semaphore);
 }
 
+void wait_queue_init(wait_queue_t * wait_queue, struct TaskStruct *tsk){
+    ListInit(&wait_queue->wait_list);
+    wait_queue->tsk = tsk;
+}
+
 void semaphore_init(semaphore_t *semaphore, unsigned long count){
     atomic_write(&semaphore->counter, count);
-    ListInit(&semaphore->wait.wait_list);
+    wait_queue_init(&semaphore->wait, NULL);
 }

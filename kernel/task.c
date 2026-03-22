@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "schedule.h"
 #include "smp.h"
+#include "fat32.h"
 
 
 #define MSR_IA32_SYSENTER_CS    (0x174)
@@ -34,9 +35,10 @@ struct ThreadStruct InitThread = {
     .ErrorCode  =   0
 };
 
-struct TaskStruct* InitTask[NR_CPUS] = {&InitTaskUnion.task, 0};
-
 struct TssStruct InitTss[NR_CPUS] = {[0 ... NR_CPUS - 1] = INIT_TSS};
+struct TaskStruct* InitTask[NR_CPUS] = {&InitTaskUnion.task, 0};
+struct ThreadStruct* InitThreads[NR_CPUS] = {&InitThread, 0};
+union TaskUnion* InitTaskUnions[NR_CPUS] = {&InitTaskUnion, 0};
 
 __asm__ (   
             ".global KernelThreadFunc      \n\t"
@@ -71,7 +73,7 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     int color   = cpu_id ? WHITE : BLUE;
 
     InitTss[cpu_id].rsp0 = next -> thread -> rsp0;
-    SetTss( &InitTss[cpu_id], InitTss[cpu_id].rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
+    SetTss( (unsigned int*)&InitTss[cpu_id], InitTss[cpu_id].rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
             InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
             InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
             InitTss[cpu_id].ist7);
@@ -84,9 +86,9 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     __asm__ volatile("movq %0,      %%fs":: "r"(next->thread->fs));
     __asm__ volatile("movq %0,      %%gs":: "r"(next->thread->gs));
 
-    ColorPrintfk(color, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
-    ColorPrintfk(color, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
-    bochs_bp();
+    // ColorPrintfk(color, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
+    // ColorPrintfk(color, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
+    // bochs_bp();
 }
 
 
@@ -98,6 +100,8 @@ unsigned long NoSystemCall(struct PtRegs* regs){
 
 unsigned long SysPrint(struct PtRegs* regs){
     ColorPrintfk(WHITE, BLACK, "SYSPrint IS Running %X\n", (char *)regs->rdi);
+    ColorPrintfk(WHITE, BLACK, "FAT32 IS Init \n");
+    DISK1_FAT32_FS_INIT();
     return 1;
 }
 
@@ -122,6 +126,7 @@ void UserLevelFunc(){
                         "sysenter                                       \n\t"
                         "sysexit_return_address:                        \n\t"
                         :"=a"(ret):"a"(0):"memory");
+    unsigned int x = 1/0;
     while(1){
 
     };
@@ -156,8 +161,8 @@ unsigned long DoExecve(struct PtRegs* regs){
     regs->rdx   = addr;   // sysexit RIP
     regs->rcx   = 0xa00000;   // sysexit RSP
     regs->rax   = 1;
-    regs->es    = 0;
-    regs->ds    = 0;
+    regs->es    = USER_DS;
+    regs->ds    = USER_DS;
     ColorPrintfk(BLUE, BLACK, "execve is running\n");
     unsigned long cr3 = GetCr3();
     tmp = PHY_TO_VIRT((unsigned long *)((cr3 & (~0xfffUL))) + GetBits(addr, PAGE_GDT_SHIFT, 9));
@@ -267,14 +272,14 @@ void TaskInit(){
     InitLmm.EndBrk      =   MMS.EndBrk;
     InitLmm.StartStack  =   _stack_start;
 
-    SetTss( (unsigned int*)&InitTss[cpu_id], InitThread.rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
+    SetTss( (unsigned int*)&InitTss[cpu_id], InitThreads[cpu_id]->rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
             InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
             InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
             InitTss[cpu_id].ist7);
     
-    InitTss[cpu_id].rsp0 = InitThread.rsp0;
+    InitTss[cpu_id].rsp0 = InitThreads[cpu_id]->rsp0;
 
-    ListInit(&InitTaskUnion.task.list);
+    ListInit(&InitTaskUnions[cpu_id]->task.list);
 
     wrmsr(MSR_IA32_SYSENTER_CS, KERNEL_CS);
     wrmsr(MSR_IA32_SYSENTER_ESP, CURRENT->thread->rsp0);
@@ -283,7 +288,7 @@ void TaskInit(){
     // Second Process Should Be User State
     KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));
 
-    InitTaskUnion.task.state = TASK_RUNING;
+    InitTaskUnions[cpu_id]->task.state = TASK_RUNING;
 
     // p = ContainerOf(ListNext(&task_scheduler.task_queue.list), struct TaskStruct, list);
 

@@ -6,6 +6,8 @@
 #include "apic.h"
 #include "8259a.h"
 #include "lib.h"
+#include "task.h"
+#include "schedule.h"
 
 #define SAVE_ALL_REGS    \
         "cld;"                  \
@@ -202,6 +204,20 @@ int RegisterIrq(unsigned long irq, void *arg, void (*handler)(struct PtRegs *reg
     return 1;
 }
 
+
+int regitser_ipi(unsigned long irq, void *arg, void (*handler)(struct PtRegs *regs, unsigned long nr, unsigned long arg),
+                unsigned long parameter, HwInterruptT * controller, char *IrqName){
+    IrqDescT * p = &smp_ipi_desc[irq - 200];
+    p->handler = handler;
+    p->parameter = parameter;
+    p->IrqName = IrqName;
+    p->flags = 0;
+    p->controller = NULL;
+
+    return 1;
+}
+
+
 int UnregisterIrq(unsigned long irq){
 
     IrqDescT * p = &InterruptDesc[irq - 32];
@@ -218,6 +234,18 @@ int UnregisterIrq(unsigned long irq){
     return 1;
 }
 
+int unregister_ipi(unsigned long irq){
+
+    IrqDescT * p = &smp_ipi_desc[irq - 200];
+
+    p->parameter = 0;
+    p->IrqName = NULL;
+    p->flags = 0;
+    p->handler = NULL;
+
+    return 1;
+}
+
 // Uncompleted !!!!!
 void DoIRQ(struct PtRegs * regs, unsigned long nr){
 
@@ -227,8 +255,9 @@ void DoIRQ(struct PtRegs * regs, unsigned long nr){
         irq = &InterruptDesc[nr - 32];
         // ColorPrintfk(BLUE, BLACK, "normal have IRQ nr : %D", nr);
     }else{
+        // bochs_bp();
         irq = &smp_ipi_desc[nr - 200];
-        ColorPrintfk(BLUE, BLACK, "smp ipi have IRQ nr : %D", nr);
+        // ColorPrintfk(BLUE, BLACK, "smp ipi have IRQ nr : %D", nr);
         wrmsr(EOIR_MSR, 0x0);
     }
 

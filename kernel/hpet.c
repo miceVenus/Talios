@@ -8,6 +8,7 @@
 #include "lib.h"
 #include "softirq.h"
 #include "schedule.h"
+#include "smp.h"
 
 #define GCAP_ID 0x0
 #define GEN_CONF 0x10
@@ -43,32 +44,33 @@ unsigned long volatile jiffies = 0;
 HwInterruptT hpet_controller;
 extern Time global_time;
 extern timer_list timer_list_header;
-extern scheduler task_scheduler;
 
 struct List *ListNext(struct List* list);
 
 void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
-    jiffies++;
 
+    jiffies++;
     if(ContainerOf(ListNext(&timer_list_header.list), timer_list, list)->expire_jiffies <= jiffies)
     add_softirq_status(TIME_SIRQ);
 
     struct TaskStruct * current = CURRENT;
+    scheduler *task_scheduler = &task_schedulers[current->cpu_id];
 
     switch (current->priority){
         case 0:
         case 1:
-            task_scheduler.CPU_exec_task_jiffies -= 1;
+            task_scheduler->CPU_exec_task_jiffies -= 1;
             current->vrun_time += 1;
             break;
 
         case 2:
-            task_scheduler.CPU_exec_task_jiffies -= 2;
+            task_scheduler->CPU_exec_task_jiffies -= 2;
             current->vrun_time += 2;
             break;
     }
 
-    if(task_scheduler.CPU_exec_task_jiffies <= 0){
+    // interrupt_cpu(0xc8, -1);
+    if(task_scheduler->CPU_exec_task_jiffies <= 0){
         CURRENT->flags |= NEED_SCHEDULE;
     }
 

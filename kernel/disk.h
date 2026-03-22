@@ -7,6 +7,7 @@
 #define ATA_GET_DISK_ID_CMD 0xec
 
 #include "lib.h"
+#include "semaphore.h"
 
 typedef struct block_buffer_node{
     unsigned int count;
@@ -16,7 +17,7 @@ typedef struct block_buffer_node{
 
     void (* end_handler)(unsigned long nr, unsigned long parameter);
 
-    struct List list;
+    wait_queue_t wait_queue;
 
 }block_buffer_node;
 
@@ -31,7 +32,7 @@ typedef struct block_device_operation{
 
 
 typedef struct request_queue{
-    struct List queue_list;
+    wait_queue_t queue_list;
     block_buffer_node *in_using;
     long block_request_count;
 
@@ -123,6 +124,7 @@ struct disk_device_info{
 
 }__attribute__((packed));
 
+void disk_init();
 long ide_open();
 long ide_close();
 long ide_ioctl(long cmd, long arg);

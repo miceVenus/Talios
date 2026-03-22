@@ -16,6 +16,7 @@
 #include "softirq.h"
 #include "schedule.h"
 #include "test/memory_test.h"
+#include "disk.h"
 
 
 void BRK(){
@@ -24,6 +25,8 @@ void BRK(){
 
 extern unsigned long _stack_start;
 // extern unsigned int TssTable[];
+
+extern SpinLock_T smp_lock;
 extern struct GlobalMemManager MMS;
 extern Time global_time;
 extern struct TssStruct InitTss[NR_CPUS];
@@ -81,7 +84,7 @@ void main(){
 
     scheduler_init();
     
-    smp_init();
+    // smp_init();
 
     // IPI INIT 
     icr_entry.vector = 0;
@@ -94,8 +97,9 @@ void main(){
 
     wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-    for(unsigned long ap_index = 1; ap_index < 4; ap_index++){
+    for(unsigned long ap_index = 1; ap_index < 1; ap_index++){
 
+        __LOCK(&smp_lock);
 
         memset(&InitTss[ap_index], 0, sizeof(struct TssStruct));
         set_tss_descriptor(10 + (ap_index * 2), (unsigned int *)&InitTss[ap_index]);
@@ -105,7 +109,6 @@ void main(){
 
         ist_ptr = (unsigned long)kmalloc(STACK_SIZE, 0) + STACK_SIZE;
         ((struct TaskStruct*)(ist_ptr - STACK_SIZE))->cpu_id = ap_index;
-
         SetTss( (unsigned int *)&InitTss[ap_index], _stack_start, _stack_start, _stack_start, ist_ptr, ist_ptr, ist_ptr,\
                 ist_ptr, ist_ptr, ist_ptr, ist_ptr);
 
@@ -119,16 +122,19 @@ void main(){
         // Send again for Safety
         wrmsr(0x830, *(unsigned long*)&icr_entry);
 
+        __LOCK(&smp_lock);
+        __UNLOCK(&smp_lock);
     }
 
     // int x = 1/ 0;
+    KeyboardInit();
+    FloppyInit();
+    disk_init();
+
     TaskInit();
     hpet_init();
     time_init();
-
-    KeyboardInit();
-    FloppyInit();
-
+    
     // icr_entry.vector = 0xc8;
     // icr_entry.delivery_target.x2apic.target = 1;
     // icr_entry.DelivMode = 0x0;

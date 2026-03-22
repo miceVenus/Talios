@@ -88,7 +88,8 @@ ENTRY(ret_system_call)
     movq    %rax,   %es
     popq    %rax
     addq    $0x38,  %rsp
-    
+
+    sti
     .byte   0x48
     sysexit
 
@@ -256,7 +257,7 @@ ENTRY(ret_from_intr)
 
     # Process that has spinlock is not allowed to be preempted
 
-    xchg    %bx, %bx
+    # xchg    %bx, %bx
     movq    TSK_PREEMPT(%rbx),      %rcx
     cmpq    $0,                     %rcx
     jne     restore_all

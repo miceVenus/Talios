@@ -14,6 +14,7 @@ ScreenInfo screenInfo;
 
 // This is a Simple PutChar For Auto Maintain screen info
 void AutoPutchar(char x, uint32_t fc, uint32_t bc);
+unsigned long get_rflags();
 inline void AutoPutchar(char x, uint32_t fc, uint32_t bc){
 
     if(screenInfo.cursorX < XCharResolution){
@@ -29,6 +30,7 @@ inline void AutoPutchar(char x, uint32_t fc, uint32_t bc){
 }
 
 int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
+
     char buffer[MAX_BUFFER_LEN];
     va_list args;
     va_start(args, fmt);
@@ -37,9 +39,14 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
 
     va_end(args);
 
-    spin_lock(&screenInfo.lock);
+    if(get_rflags() & 0x200UL){
+        spin_lock(&screenInfo.lock);
+    }
+
     for(int i = 0, Offset; i < BufferLen; i++){
 
+        // if(buffer[0] == 'd' && buffer[1] == 'p' && buffer[2] == 't')
+        // bochs_bp();
         switch (buffer[i]){
         case '\t':
             Offset = TAB_WIDTH - screenInfo.cursorX % TAB_WIDTH;
@@ -74,7 +81,10 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
             AutoPutchar(buffer[i], ForeColor, BackColor);
         }
     }
-    spin_unlock(&screenInfo.lock);
+    if(get_rflags() & 0x200UL){
+        spin_unlock(&screenInfo.lock);
+    }
+
     return 0;
 }
 

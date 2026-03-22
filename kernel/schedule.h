@@ -8,10 +8,11 @@ typedef struct scheduler{
     long running_task_count;
     long CPU_exec_task_jiffies;
     TaskStruct task_queue;
+    long min_vrun_time;
 
 }scheduler;
 
-extern scheduler task_scheduler;
+extern scheduler task_schedulers[NR_CPUS];
 
 
 void schedule();
