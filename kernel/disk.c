@@ -195,13 +195,14 @@ long cmd_out(){
 
         case ATA_GET_DISK_ID_CMD:
 
+            // CMD REGISTER MUST BE ZERO 
             OUT8b(SECONDARY_CHANNEL_CMD_CONF_REGISTER, 0xe0);
 
             OUT8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS, 0);
-            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, GetBits(node->count, 0, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, GetBits(node->lba, 0, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, GetBits(node->lba, 8, 8));
-            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, GetBits(node->lba, 16, 8));
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR_NUM, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_SECTOR, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN1, 0);
+            OUT8b(SECONDARY_CHANNEL_CMD_COLUMN2, 0);
 
             while(!(IN8b(SECONDARY_CHANNEL_CTRL_STATUS_CTRL) & DISK_STATUS_READY))
                 nop();
@@ -295,6 +296,7 @@ void get_disk_id_handler(unsigned long nr, unsigned long arg){
 
 void read_handler(unsigned long nr, unsigned long arg){
     block_buffer_node *node = ((request_queue*)arg)->in_using;
+
     if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
         ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
     }else if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_REQ){
@@ -302,9 +304,10 @@ void read_handler(unsigned long nr, unsigned long arg){
     }else{
         ColorPrintfk(RED, BLACK, "Read Handler Error : No Data To Be Read");
     }
-        
 
-    end_request(node);
+    node->count--;
+    node->buffer += 512;
+    if(node->count == 0) end_request(node);
 }
 
 void write_handler(unsigned long nr, unsigned long arg){
@@ -313,7 +316,9 @@ void write_handler(unsigned long nr, unsigned long arg){
         ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
     }
 
-    end_request(node);
+    node->count--;
+    node->buffer += 512;
+    if(node->count == 0) end_request(node);
 }
 
 void other_handler(unsigned long nr, unsigned long arg){

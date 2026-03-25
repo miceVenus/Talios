@@ -125,3 +125,22 @@ int StringLen(char *Str){
     while(*Ptr != '\0') Ptr++;
     return Ptr - Str;
 }
+
+int strcmp(char *str1, char *str2){
+    while(*str1 && *str2 && (*str1 == *str2)) {str1++; str2++;}
+    return *str1 - *str2;
+}
+
+void upper_case(char *str){
+    while(*str){
+        if(is_char(*str) && *str >= 'a') *str = *str + 'A' - 'a';
+        str++;
+    }
+}
+
+void lower_case(char *str){
+    while(*str){
+        if(is_char(*str) && *str <= 'Z') *str = *str - 'A' + 'a';
+        str++;
+    }
+}

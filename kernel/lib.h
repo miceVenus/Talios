@@ -61,6 +61,9 @@ typedef unsigned char uint8_t;
 
 #define BCD_TO_BIN(value) (GetBits(value, 4, 4) * 10 + GetBits(value, 0, 4))
 
+#define is_num(char) (((char) <= '9' && (char) >= '0') ? 1 : 0)
+#define is_char(char) (((char) <= 'z' && (char) >= 'a') ||((char) <= 'Z' && (char) >= 'A') ? 1 : 0)
+
 // ONLY IN GNU C !!!!!!
 #define SwitchMem(Ptr1, Ptr2) ({\
         typeof(*(Ptr1)) Temp; \
@@ -75,7 +78,6 @@ typedef unsigned char uint8_t;
     typeof(ptr) p = (ptr);                                              \
     (type *)((unsigned long)p - (unsigned long)&(((type *)0)->member));  \
 })
-
 
 struct List{
     struct List *prev;
@@ -187,5 +189,8 @@ char*   StringReverse(char *Str);
 void    StringCopy(char *Src, char *Dst);
 void    StringNCopy(char *Src, char *Dst, size_t n);
 int     NumToString(char *Buffer, long Num, unsigned int base, int Upper);
+void    upper_case(char *str);
+void    lower_case(char *str);
+int     strcmp(char *str1, char *str2);
 
 #endif

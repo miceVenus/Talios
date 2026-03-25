@@ -126,7 +126,6 @@ void UserLevelFunc(){
                         "sysenter                                       \n\t"
                         "sysexit_return_address:                        \n\t"
                         :"=a"(ret):"a"(0):"memory");
-    unsigned int x = 1/0;
     while(1){
 
     };
