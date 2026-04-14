@@ -10,67 +10,8 @@
 #define ATTR_ARCHIVE    (1 << 5)
 #define ATTR_LONG_NAME  0x0f
 
-// 16B totally
-typedef struct disk_partition_table_entry{
-
-    unsigned int    boot_indicator: 8,      // 0x80 active partition 0x00 inactive
-                    start_head:     8,
-                    start_sector:   6,
-                    start_cylinder: 10;
-    
-    unsigned int    partition_type: 8,      // 0x0c FAR32 LBA 0x0b FAT32 CHS
-                    end_head:       8,
-                    end_sector:     6,
-                    end_cylinder:   10;
-
-    unsigned int    start_lba;
-    unsigned int    total_sectors;
-
-
-}__attribute__((packed))disk_partition_table_entry;
-
-
-// MBR
-typedef struct disk_partition_table{
-    // loader code
-    unsigned char   bs_reserved[446];
-    disk_partition_table_entry DPTE[4];
-    unsigned short  bs_trailsignature;  // 0xaa55
-}__attribute__((packed))disk_partition_table;
-
-
-// totally 90B
-typedef struct disk_boot_sector{
-    unsigned char BS_jmpBoot[3];
-    unsigned char BS_OEMName[8];
-    unsigned short BPB_BytesPerSec;
-    unsigned char BPB_SecsPerClus;
-    unsigned short BPB_RsvdSecCnt;
-    unsigned char BPB_NumFATs;
-    unsigned char BPB_RootEntCnt[2];    // Usually 0
-    unsigned char BPB_TotSec16[2];      // Usually 0
-    unsigned char BPB_Media;
-    unsigned char BPB_FATsz16[2];       // Usually 0
-    unsigned char BPB_SecPerTrk[2];
-    unsigned char BPB_NumHeads[2];
-    unsigned char BPB_HiddSec[4];
-    unsigned int BPB_TotSec32;
-    unsigned int  BPB_FATsz32;
-    unsigned char BPB_ExtFlags[2];
-    unsigned char BPB_FSVer[2];         // Usually 0
-    unsigned int  BPB_RootClus;      // Usually 2
-    unsigned short BPB_FSInfo;
-    unsigned char BPB_BKBootSec[2];     // Usually 6
-    unsigned char BPB_Reserved[12];
-    unsigned char BS_DrvNum[1];         // DISK is 0x80
-    unsigned char BS_Reserved1[1];
-    unsigned char BS_BootSig[1];        // Usually 0x29
-    unsigned char BS_VolID[4];          // Randomly
-    unsigned char BS_VolLab[11];
-    unsigned char BS_FileSysType[8];    // "FAT 32"
-    unsigned char BootCode[420];
-    unsigned short BS_TrailSignature;   // 0xaa55
-}__attribute__((packed))disk_boot_sector;
+#include "vfs.h"
+#include "disk.h"
 
 typedef struct FAT32_FSInfo{
     unsigned char lead_signature[4];    // "RRaA"
@@ -86,8 +27,8 @@ typedef struct FAT32_FSInfo{
 typedef struct FAT32_Directory{
     unsigned char dir_name[11];
     unsigned char dir_attr;
-    unsigned char dir_ntres;
-    unsigned char dir_crt_time_tenth;
+    unsigned char dir_ntres;            // NT reserved filed
+    unsigned char dir_crt_time_tenth;   // create time high precision extension
     unsigned short dir_crt_time;
     unsigned short dir_crt_Date;
     unsigned short dir_last_acc_Date;
@@ -125,6 +66,7 @@ typedef struct FAT32_sb_info{
     unsigned long fst_data_sector;
     unsigned long byte_per_clus;
     unsigned long sec_per_fat;
+    unsigned long sec_per_clus;
 
     unsigned long fs_info_flat;
     unsigned long bootsector_bk_flat;
@@ -148,6 +90,36 @@ typedef struct FAT32_inode_info{
 }FAT32_inode_info;
 
 void DISK1_FAT32_FS_INIT();
-int path_walk(FAT32_Directory* res, char *path, unsigned long flags);
+dir_entry * path_walk(char *path, unsigned long flags);
+super_block * fat32_read_superblock(disk_partition_table_entry *dpte, void *buf);
+
+// dentry op
+int fat32_create(index_node * inode, dir_entry * dir, int mode);
+int fat32_mkdir(index_node * inode, dir_entry * dir, int mode);
+int fat32_rmdir(index_node * inode, dir_entry * dir);
+int fat32_rename(index_node * old_inode, dir_entry * old_dentry, index_node * new_inode, dir_entry * new_dentry);
+int fat32_getattr(dir_entry * dir, unsigned long * attr);
+int fat32_setattr(dir_entry * dir, unsigned long * attr);
+
+
+// inode op
+dir_entry * fat32_lookup(index_node* parent_inode, dir_entry * dir);
+int fat32_compare(dir_entry * pdentry, char * source_filename, char * dest_filename);
+int fat32_hash(dir_entry * dentry, char *filename);
+int fat32_release(dir_entry * dentry);
+int fat32_iput(dir_entry * dentry, index_node * inode);
+
+// file op
+int fat32_open(index_node * inode, file * filp);
+int fat32_read(index_node * inode, file * filp);
+int fat32_write(file * filp, char * buf, unsigned long count, long * position);
+int fat32_close(file * filp, char * buf, unsigned long count, long * position);
+int fat32_lseek(file * filp, long offset, long origin);
+int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
+
+// super block op
+void fat32_write_superblock(super_block * lsb);
+void fat32_put_superblock(super_block * lsb);
+void fat32_write_inode(index_node * inode);
 
 #endif

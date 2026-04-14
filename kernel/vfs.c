@@ -7,7 +7,7 @@ file_system_type filesystem = {.name = "filesystem", 0};
 super_block * mount_fs(char * name, disk_partition_table_entry * dpte, void * buf){
 
     for(file_system_type *p = &filesystem; p; p = p->next){
-        if(!strcmp(name, filesystem.name)){
+        if(!strcmp(name, p->name)){
             return p->read_super_block(dpte, buf);
         }
     }
@@ -22,7 +22,7 @@ int register_filesystem(file_system_type * fs){
     }
 
     fs->next = filesystem.next;
-    filesystem.next = fs->next;
+    filesystem.next = fs;
 
     return 1;
 }

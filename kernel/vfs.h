@@ -3,9 +3,12 @@
 
 
 #include "lib.h"
-#include "fat32.h"
+#include "disk.h"
 
 #define FS_ATTR_DIR 0
+
+#define BYTE_PER_VSEC 512
+#define BYTE_PER_VSEC_SHIFT 9
 
 typedef struct index_node index_node;
 typedef struct super_block super_block;
@@ -71,8 +74,8 @@ typedef struct file{
 }file;
 
 typedef struct super_block_operations{
+    void (*put_sb)(super_block * sb);
     void (*write_sb)(super_block * sb);
-    void (*read)(super_block * sb);
     void (*write_inode)(index_node * inode);
 }super_block_operations;
 
@@ -106,5 +109,9 @@ typedef struct file_operations{
     int (*ioctl)(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
 
 }file_operations;
+
+
+super_block * mount_fs(char * name, disk_partition_table_entry * dpte, void * buf);
+int register_filesystem(file_system_type * fs);
 
 #endif
