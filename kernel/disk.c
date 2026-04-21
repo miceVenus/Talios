@@ -1,7 +1,9 @@
 #include "disk.h"
 #include "apic.h"
 #include "interrupt.h"
+#include "schedule.h"
 #include "memory.h"
+#include "semaphore.h"
 #include "printk.h"
 
 // DISK USE IRQ 14 OR 15

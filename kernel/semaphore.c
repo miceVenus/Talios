@@ -1,4 +1,6 @@
 #include "semaphore.h"
+#include "task.h"
+#include "schedule.h"
 
 
 void atomic_write(atomic_t * atomic, long value);

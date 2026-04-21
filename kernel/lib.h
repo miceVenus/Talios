@@ -127,6 +127,15 @@ static inline void port_outsw(void *buffer, unsigned int port, unsigned long num
     __asm__ volatile("rep outsw":"+D"(buffer), "+c"(num):"d"(port):"memory");
 }
 
+
+// verified if area is in user space (return 1)
+static inline long verify_area(unsigned char * area, unsigned long size){
+    if((unsigned long)area + size <= (unsigned long)0x00007fffffffffff)
+        return 1;
+    else 
+        return 0;
+}
+
 inline void ListInit(struct List *list){
     list->prev = list;
     list->next = list;
@@ -192,5 +201,11 @@ int     NumToString(char *Buffer, long Num, unsigned int base, int Upper);
 void    upper_case(char *str);
 void    lower_case(char *str);
 int     strcmp(char *str1, char *str2);
+
+long    copy_from_user(void * from, void * to, unsigned long size);
+long    copy_to_user(void * from, void * to, unsigned long size);
+
+long    strncpy_from_user(char * src, char * dst, unsigned long size);
+long    strnlen_user(char * src, unsigned long size);
 
 #endif

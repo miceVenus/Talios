@@ -3,8 +3,8 @@
 
 #include "atomic.h"
 #include "lib.h"
-#include "task.h"
-#include "schedule.h"
+
+struct TaskStruct;
 
 typedef struct wait_queue_t{
     struct List wait_list;

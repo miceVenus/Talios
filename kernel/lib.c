@@ -144,3 +144,54 @@ void lower_case(char *str){
         str++;
     }
 }
+
+long copy_from_user(void * from, void * to, unsigned long size){
+
+    unsigned long d0, d1;
+    if(!verify_area((unsigned char *)from, size))
+        return 0;
+    __asm__ volatile(
+        "rep            \n\t"
+        "movsq          \n\t"
+        "movq   %3, %0  \n\t"
+        "rep            \n\t"
+        "movsb          \n\t"
+        :"=&c"(size), "=&D"(d0), "=&S"(d1)
+        :"r"(size & 7), "0"(size >> 3), "1"(to), "2"(from)
+        :"memory"
+    );
+
+    return size;
+}
+
+long copy_to_user(void * from, void * to, unsigned long size){
+
+    unsigned long d0, d1;
+    if(!verify_area((unsigned char *)to, size))
+        return 0;
+    __asm__ volatile(
+        "rep            \n\t"
+        "movsq          \n\t"
+        "movq   %3, %0  \n\t"
+        "rep            \n\t"
+        "movsb          \n\t"
+        :"=&c"(size), "=&D"(d0), "=&S"(d1)
+        :"r"(size & 7), "0"(size >> 3), "1"(to), "2"(from)
+        :"memory"
+    );
+
+    return size;
+}
+
+long strncpy_from_user(char * src, char * dst, unsigned long size){
+    src[size] = '\0';
+    return copy_from_user((void *)src, (void *)dst, size);
+}
+
+long strnlen_user(char *src, unsigned long size){
+    if(!verify_area(src, size)) return 0;
+
+    char *Ptr = src;
+    while(*Ptr != '\0' && (Ptr - src) < size) Ptr++;
+    return Ptr - src;
+}

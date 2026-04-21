@@ -113,5 +113,6 @@ typedef struct file_operations{
 
 super_block * mount_fs(char * name, disk_partition_table_entry * dpte, void * buf);
 int register_filesystem(file_system_type * fs);
+dir_entry* path_walk(char *path, unsigned long flags);
 
 #endif

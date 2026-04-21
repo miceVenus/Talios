@@ -11,7 +11,9 @@ enum COLOR{
     WHITE   = 0xFFFFFF,
     BLACK   = 0x000000,
     YELLOW  = 0xFFE820,
-    BLUE    = 0x0062FF
+    BLUE    = 0x0062FF,
+    GREEN   = 0x32ff00,
+    ORANGE  = 0xff6c00,
 };
 
 typedef struct ScreenInfo{

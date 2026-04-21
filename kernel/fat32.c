@@ -44,7 +44,7 @@ index_node_operations FAT32_inode_ops = {
 // unsigned long fst_data_sector;
 // unsigned long byte_per_clus;
 
-static super_block *fsb;
+extern super_block *fsb;
 
 void ListInit(struct List *list);
 
@@ -189,7 +189,9 @@ int fat32_hash(dir_entry * dentry, char *filename){}
 int fat32_release(dir_entry * dentry){}
 int fat32_iput(dir_entry * dentry, index_node * inode){}
 
-int fat32_open(index_node * inode, file * filp){}
+int fat32_open(index_node * inode, file * filp){
+    return 1;
+}
 int fat32_read(index_node * inode, file * filp){}
 int fat32_write(file * filp, char * buf, unsigned long count, long * position){}
 int fat32_close(file * filp, char * buf, unsigned long count, long * position){}
@@ -293,47 +295,6 @@ void fat32_write_inode(index_node * inode){
     kfree(buf);
 }
 
-dir_entry* path_walk(char *path, unsigned long flags){
-    char *start = path;
-    char *end  = path;
-    dir_entry * parent = fsb->root;
-    dir_entry * c_dir   = NULL;
-    FAT32_sb_info * sb_info = (FAT32_sb_info*)fsb->private_sb_info;
-    FAT32_inode_info * inode_info = (FAT32_inode_info*)parent->dir_node->private_index_info;
-
-    char name[256] = {0};
-    unsigned long clus = inode_info->first_cluster;
-    // unsigned long lba = CLUS_TO_LBA(sb_info->fst_data_sector, clus, sb_info->sec_per_clus);
-
-    while(*end){
-        start = end;
-        while(*start == '/') start++;
-        end = start;
-        while(*end != '/' && *end != '\0') end++;
-        memcopy(start, name, (end - start));
-        name[end - start] = '\0';
-        c_dir = (dir_entry*)kmalloc(sizeof(dir_entry), 0);
-        c_dir->name_len = end - start;
-        c_dir->name = (char*)kmalloc(c_dir->name_len + 1, 0);
-        memcopy(start, c_dir->name, c_dir->name_len);
-        c_dir->name[c_dir->name_len] = '\0';
-
-        if(parent->dir_node->inode_ops->lookup(parent->dir_node, c_dir) == NULL){
-            kfree(c_dir->name);
-            kfree(c_dir);
-            return NULL;
-        }
-
-        ListInit(&c_dir->child_node);
-        ListInit(&c_dir->subdirs_list);
-        c_dir->parent = parent;
-        ListBackAdd(&parent->subdirs_list, &c_dir->child_node);
-        parent = c_dir;
-    }
-
-    return c_dir;
-}
-
 
 void DISK1_FAT32_FS_INIT(){
 
@@ -343,10 +304,9 @@ void DISK1_FAT32_FS_INIT(){
     ide_transfer(ATA_READ_CMD, 0, 1, buf);
     register_filesystem(&FAT32_filesystem);
     mount_fs(FAT32_filesystem.name, &((disk_partition_table*)buf)->DPTE[0], buf);
-
-    
-    dir_entry * dentry = path_walk("/SJKLDJLK/shdadhajskh/SAD/LLLKSNNMM.txt", 0);
-    ColorPrintfk(BLUE, BLACK, "entry.dir_name: %s\n", dentry->name);
+ 
+    // dir_entry * dentry = path_walk("/SJKLDJLK/shdadhajskh/SAD/LLLKSNNMM.txt", 0);
+    // ColorPrintfk(BLUE, BLACK, "entry.dir_name: %s\n", dentry->name);
 
     // ide_transfer(ATA_READ_CMD, 0, 1, buf);
     // dpt = *(disk_partition_table*)buf;

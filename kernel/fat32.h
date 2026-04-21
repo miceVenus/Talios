@@ -11,7 +11,6 @@
 #define ATTR_LONG_NAME  0x0f
 
 #include "vfs.h"
-#include "disk.h"
 
 typedef struct FAT32_FSInfo{
     unsigned char lead_signature[4];    // "RRaA"

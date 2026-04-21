@@ -3,8 +3,12 @@
 
 #include "lib.h"
 
+#include "vfs.h"
+
 #define STACK_SIZE 32768
 #define MAX_SYS_CALL 128
+#define MAX_HANDLE_PER_TASK 20
+#define TASK_SIZE 0x00007fffffffffff
 
 
 // struct task_struct->flags
@@ -21,10 +25,10 @@
 
 #define INIT_TASK(tsk) {    \
     .state  =   TASK_UNINTERRUPTABLE,    \
-    .flags  =   PF_KTHREAD, \
+    .flags  =   PF_KTHREAD,             \
     .lmm    =   &InitLmm,               \
     .thread =   &InitThread,            \
-    .AddrLimit  = 0xffff800000000000,   \
+    .AddrLimit  = TASK_SIZE,            \
     .pid        = 0,                    \
     .counter    = 1,                    \
     .signal     = 0,                    \
@@ -32,6 +36,7 @@
     .vrun_time  = 0,                    \
     .preempt_count = 0,                 \
     .cpu_id     = 0,                    \
+    .handle_array = {0},                \
 }
 
 #define STOP   \
@@ -136,6 +141,9 @@ typedef struct TaskStruct{
     long priority;
     long vrun_time;
     long cpu_id;
+
+    file * handle_array[MAX_HANDLE_PER_TASK];
+
 }TaskStruct;
 
 union TaskUnion{

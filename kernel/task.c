@@ -1,11 +1,11 @@
 #include "task.h"
 #include "gate.h"
 #include "printk.h"
-#include "lib.h"
 #include "memory.h"
 #include "schedule.h"
 #include "smp.h"
 #include "fat32.h"
+#include "unistd.h"
 
 
 #define MSR_IA32_SYSENTER_CS    (0x174)
@@ -91,41 +91,24 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     // bochs_bp();
 }
 
-
-/*          SYSCALL         */
-unsigned long NoSystemCall(struct PtRegs* regs){
-    ColorPrintfk(RED, BLACK, "There Is No System Call %X \n", regs->rax);
-    return -1;
-}
-
-unsigned long SysPrint(struct PtRegs* regs){
-    ColorPrintfk(WHITE, BLACK, "SYSPrint IS Running %X\n", (char *)regs->rdi);
-    ColorPrintfk(WHITE, BLACK, "FAT32 IS Init \n");
-    DISK1_FAT32_FS_INIT();
-    return 1;
-}
-
-system_call_t SystemCallTable[MAX_SYS_CALL] = {
-    [0] = SysPrint,
-    [1 ... MAX_SYS_CALL - 1] = NoSystemCall,
-};
-
-unsigned long SystemCallFunc(struct PtRegs* regs){
-    return SystemCallTable[regs->rax](regs);
-}
-
-
 void UserLevelFunc(){
 
     // Can`t Be Called
     // ColorPrintfk(BLUE, BLACK, "In User Level\n");
     
-    long ret = 0;
-    __asm__ volatile(   "leaq sysexit_return_address(%%rip),   %%rdx    \n\t"
-                        "movq   %%rsp,  %%rcx                           \n\t"
+    char string[] = "/SJKLDJLK/shdadhajskh/SAD/LLLKSNNMM.txt";
+    long errono = 0;
+    __asm__ volatile(   "pushq  %%r11                                   \n\t"
+                        "pushq  %%r10                                   \n\t"
+                        "leaq sysexit_return_address(%%rip),   %%r10    \n\t"
+                        "movq   %%rsp,  %%r11                           \n\t"
                         "sysenter                                       \n\t"
                         "sysexit_return_address:                        \n\t"
-                        :"=a"(ret):"a"(0):"memory");
+                        "xchgq  %%rdx,  %%r10                           \n\t"
+                        "xchgq  %%rcx,  %%r11                           \n\t"
+                        "popq   %%r10                                   \n\t"
+                        "popq   %%r11                                   \n\t"
+                        :"=a"(errono):"0"(__NR_open), "D"(string), "S"(0):"memory");
     while(1){
 
     };
@@ -136,6 +119,7 @@ unsigned long init(unsigned long arg){
     ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
 
     struct PtRegs* regs;
+    DISK1_FAT32_FS_INIT();
 
     CURRENT->thread->rip = (unsigned long)ret_system_call;
     CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
@@ -157,9 +141,11 @@ unsigned long DoExecve(struct PtRegs* regs){
     struct Page *p = NULL;
 
 
-    regs->rdx   = addr;   // sysexit RIP
-    regs->rcx   = 0xa00000;   // sysexit RSP
+    regs->rdx   = addr;         // sysexit RIP
+    regs->rcx   = 0xa00000;     // sysexit RSP
     regs->rax   = 1;
+    regs->r10   = addr;         // sysexit RIP
+    regs->r11   = 0xa00000;     // sysexit RSP
     regs->es    = USER_DS;
     regs->ds    = USER_DS;
     ColorPrintfk(BLUE, BLACK, "execve is running\n");
@@ -178,7 +164,7 @@ unsigned long DoExecve(struct PtRegs* regs){
     FlushTLB();
 
     if(!(CURRENT->flags & PF_KTHREAD))
-        CURRENT->AddrLimit = 0xffff800000000000;
+        CURRENT->AddrLimit = TASK_SIZE;
 
     memcopy(UserLevelFunc, addr, 1024);
 

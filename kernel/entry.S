@@ -61,8 +61,12 @@ ENTRY(Syscall)
     movq    %rdx,   %ds
     movq    %rdx,   %es
 
-    movq    %rsp,   %rdi
-    callq   SystemCallFunc
+    movq    RAX(%rsp), %rax
+    leaq    system_call_table(%rip),    %rbx
+
+    callq   *(%rbx, %rax, 8)
+
+    movq    %rax,   RAX(%rsp)
 
 
 
@@ -88,6 +92,9 @@ ENTRY(ret_system_call)
     movq    %rax,   %es
     popq    %rax
     addq    $0x38,  %rsp
+
+    xchgq    %r11,   %rcx
+    xchgq    %r10,   %rdx
 
     sti
     .byte   0x48
