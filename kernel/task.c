@@ -98,17 +98,63 @@ void UserLevelFunc(){
     
     char string[] = "/SJKLDJLK/shdadhajskh/SAD/LLLKSNNMM.txt";
     long errono = 0;
+    unsigned long fd;
+
+    // OPEN
     __asm__ volatile(   "pushq  %%r11                                   \n\t"
                         "pushq  %%r10                                   \n\t"
-                        "leaq sysexit_return_address(%%rip),   %%r10    \n\t"
+                        "leaq 1f(%%rip),   %%r10    \n\t"
                         "movq   %%rsp,  %%r11                           \n\t"
                         "sysenter                                       \n\t"
-                        "sysexit_return_address:                        \n\t"
+                        "1:                        \n\t"
                         "xchgq  %%rdx,  %%r10                           \n\t"
                         "xchgq  %%rcx,  %%r11                           \n\t"
                         "popq   %%r10                                   \n\t"
                         "popq   %%r11                                   \n\t"
                         :"=a"(errono):"0"(__NR_open), "D"(string), "S"(0):"memory");
+
+    fd = errono;
+
+    int length = 17;
+    char buffer[length];
+    // read
+    __asm__ volatile(   "pushq  %%r11                                   \n\t"
+                        "pushq  %%r10                                   \n\t"
+                        "leaq 1f(%%rip),   %%r10    \n\t"
+                        "movq   %%rsp,  %%r11                           \n\t"
+                        "sysenter                                       \n\t"
+                        "1:                        \n\t"
+                        "xchgq  %%rdx,  %%r10                           \n\t"
+                        "xchgq  %%rcx,  %%r11                           \n\t"
+                        "popq   %%r10                                   \n\t"
+                        "popq   %%r11                                   \n\t"
+                        :"=a"(errono):"0"(__NR_read), "D"(fd), "S"(buffer), "d"(length):"memory");
+
+    // put string
+    __asm__ volatile(   "pushq  %%r11                                   \n\t"
+                        "pushq  %%r10                                   \n\t"
+                        "leaq 1f(%%rip),   %%r10    \n\t"
+                        "movq   %%rsp,  %%r11                           \n\t"
+                        "sysenter                                       \n\t"
+                        "1:                        \n\t"
+                        "xchgq  %%rdx,  %%r10                           \n\t"
+                        "xchgq  %%rcx,  %%r11                           \n\t"
+                        "popq   %%r10                                   \n\t"
+                        "popq   %%r11                                   \n\t"
+                        :"=a"(errono):"0"(__NR_putstring), "D"(buffer):"memory");
+
+    // CLOSE
+    __asm__ volatile(   "pushq  %%r11                                   \n\t"
+                        "pushq  %%r10                                   \n\t"
+                        "leaq 1f(%%rip),   %%r10    \n\t"
+                        "movq   %%rsp,  %%r11                           \n\t"
+                        "sysenter                                       \n\t"
+                        "1:                        \n\t"
+                        "xchgq  %%rdx,  %%r10                           \n\t"
+                        "xchgq  %%rcx,  %%r11                           \n\t"
+                        "popq   %%r10                                   \n\t"
+                        "popq   %%r11                                   \n\t"
+                        :"=a"(errono):"0"(__NR_close), "D"(fd):"memory");
     while(1){
 
     };
@@ -166,7 +212,7 @@ unsigned long DoExecve(struct PtRegs* regs){
     if(!(CURRENT->flags & PF_KTHREAD))
         CURRENT->AddrLimit = TASK_SIZE;
 
-    memcopy(UserLevelFunc, addr, 1024);
+    memcopy(UserLevelFunc, (void *)addr, 1024);
 
     return 0;
 }

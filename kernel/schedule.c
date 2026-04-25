@@ -26,8 +26,11 @@ struct TaskStruct * get_next_task(){
     task = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list);
     ListDelete(&task->list);
     task_scheduler->running_task_count -= 1;
-    task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
-    
+
+    if(ListIsEmpty(&task_scheduler->task_queue.list))
+        task_scheduler->min_vrun_time = InitTaskUnion->task.vrun_time;
+    else
+        task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
         
     return task;
 }
@@ -60,11 +63,17 @@ void schedule(){
     struct TaskStruct *task = get_next_task();
 
     if(current->vrun_time >= task->vrun_time || current->state != TASK_RUNING){
-        if(current == task) return;
-        
+
+        // if current == task it is means this schedule is not start from interruption
+        // so it would break some thing
+        if(current == task){
+            insert_task_queue(task);
+            return;
+        }
+
         if(current->state == TASK_RUNING)
             insert_task_queue(current);
-        if(!task_scheduler->CPU_exec_task_jiffies){
+        if(task_scheduler->CPU_exec_task_jiffies <= 0){
             switch(task->priority){
                 case 0:
                 case 1:

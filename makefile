@@ -1,5 +1,5 @@
 # CONFIGURE TOOL CHAIN
-CC 		:= 	gcc
+CC 		:= 	gcc-9
 LD 		:= 	ld
 OBJCOPY := 	objcopy
 AS 		:=	as

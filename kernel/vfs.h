@@ -86,7 +86,7 @@ typedef struct index_node_operations{
     int (*mkdir)(index_node * inode, dir_entry * entrym, int mode);
     int (*rmdir)(index_node * inode, dir_entry * dentry);
     int (*rename)(index_node * old_node, dir_entry * old_entry, index_node * new_node, dir_entry * new_entry);
-    int (*getattr)(dir_entry * dentry);
+    int (*getattr)(dir_entry * dentry, unsigned long * attr);
     int (*setattr)(dir_entry * dentry, unsigned long * attr);
 
 }index_node_operations;
@@ -102,9 +102,9 @@ typedef struct dir_entry_operations{
 
 typedef struct file_operations{
     int (*open)(index_node * inode, file * filp);
-    int (*read)(index_node * inode, file * filp);
+    int (*read)(file * filp, char * buf, unsigned long count, long * position);
     int (*write)(file * filp, char * buf, unsigned long count, long * position);
-    int (*close)(file * filp, char * buf, unsigned long count, long * position);
+    int (*close)(index_node * inode, file * filp);
     int (*lseek)(file * filp, long offset, long origin);
     int (*ioctl)(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
 

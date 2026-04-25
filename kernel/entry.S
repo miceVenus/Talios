@@ -57,9 +57,9 @@ ENTRY(Syscall)
     pushq   %r14
     pushq   %r15
 
-    movq    $0x10,  %rdx
-    movq    %rdx,   %ds
-    movq    %rdx,   %es
+    movq    $0x10,  %rax
+    movq    %rax,   %ds
+    movq    %rax,   %es
 
     movq    RAX(%rsp), %rax
     leaq    system_call_table(%rip),    %rbx

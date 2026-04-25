@@ -3,6 +3,7 @@
 #include "lib.h"
 #include "printk.h"
 #include "memory.h"
+#include "errno.h"
 
 #define CLUS_TO_LBA(FDS, CLUS, SPC) ((FDS) + (((CLUS) - 2) * (SPC)))
 
@@ -192,9 +193,59 @@ int fat32_iput(dir_entry * dentry, index_node * inode){}
 int fat32_open(index_node * inode, file * filp){
     return 1;
 }
-int fat32_read(index_node * inode, file * filp){}
+int fat32_read(file * filp, char * buf, unsigned long count, long * position){
+    long errno;
+    unsigned long remainder;
+    unsigned long lba;
+    int ret_val;
+    unsigned long length;
+    FAT32_inode_info * inode_info = filp->dentry->dir_node->private_index_info;
+    FAT32_sb_info * sb_info = filp->dentry->dir_node->sb->private_sb_info;
+    unsigned long byte_per_clus = sb_info->byte_per_clus;
+    unsigned long offset = *position % byte_per_clus;
+    unsigned long index = 0;
+    unsigned long clus = inode_info->first_cluster + (*position / byte_per_clus);
+
+    if(*position + count > filp->dentry->dir_node->file_size)
+        remainder = filp->dentry->dir_node->file_size - *position;
+    else
+        remainder = count;
+
+    unsigned char * buffer = kmalloc(byte_per_clus, 0);
+
+    do{
+        lba = CLUS_TO_LBA(sb_info->fst_data_sector, clus, sb_info->sec_per_clus);
+        errno = ide_transfer(ATA_READ_CMD, lba, sb_info->sec_per_clus, buffer);
+        if(!errno){
+            ret_val = -EIO;
+            break;
+        }
+        
+        length = remainder < byte_per_clus ? remainder : byte_per_clus;
+        length = offset ? byte_per_clus - offset : length;
+
+        if(buf + offset < TASK_SIZE)
+            copy_to_user(buffer + offset, buf + index, length);
+        else
+            memcopy(buffer + offset, buf + index, length);
+
+        remainder -= length;
+        index += length;
+        offset = 0;
+        clus = fat32_table_read(sb_info, clus);
+    }while(remainder && clus);
+
+    *position += index;
+
+    kfree(buffer);
+    if(!remainder){
+        ret_val = index;
+    }
+    return ret_val;
+}
+
 int fat32_write(file * filp, char * buf, unsigned long count, long * position){}
-int fat32_close(file * filp, char * buf, unsigned long count, long * position){}
+int fat32_close(index_node * inode, file * filp){}
 int fat32_lseek(file * filp, long offset, long origin){}
 int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg){}
 

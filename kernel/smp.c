@@ -126,7 +126,7 @@ void start_smp(){
     unsigned long ap_id = get_lapic_id();
 
 
-    InitTaskUnions[ap_id] = CURRENT;
+    InitTaskUnions[ap_id] = (union TaskUnion*)CURRENT;
 
     CURRENT->state  =   TASK_UNINTERRUPTABLE;
     CURRENT->flags  =   PF_KTHREAD;

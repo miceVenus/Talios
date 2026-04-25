@@ -110,9 +110,9 @@ int fat32_iput(dir_entry * dentry, index_node * inode);
 
 // file op
 int fat32_open(index_node * inode, file * filp);
-int fat32_read(index_node * inode, file * filp);
+int fat32_read(file * filp, char * buf, unsigned long count, long * position);
 int fat32_write(file * filp, char * buf, unsigned long count, long * position);
-int fat32_close(file * filp, char * buf, unsigned long count, long * position);
+int fat32_close(index_node * inode, file * filp);
 int fat32_lseek(file * filp, long offset, long origin);
 int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
 

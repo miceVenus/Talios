@@ -227,13 +227,17 @@ void submit(block_buffer_node * node){
 }
 
 void wait_for_finish(){
-    CURRENT->state = TASK_UNINTERRUPTABLE;
-
     // In CFS process preempted because of IO would discard its jiffies  
-    task_schedulers->CPU_exec_task_jiffies = 0;
+    task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies = 0;
     // ColorPrintfk(BLUE, BLACK, "%X\n", disk_request_queue.in_using);
-    schedule();
+    if(CURRENT->state == TASK_UNINTERRUPTABLE){
+        sti();
+        schedule();
+    }else{
+        sti();
+    }
 }
+
 long ide_close(){
 
 }
@@ -248,7 +252,7 @@ long ide_ioctl(long cmd, long arg){
     case ATA_GET_DISK_ID_CMD:
         OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, cmd);
         disk_device_info * device_info = (disk_device_info *)kmalloc(sizeof(disk_device_info), 0); 
-        block_buffer_node * node = make_request(cmd, 0, 0, device_info);
+        block_buffer_node * node = make_request(cmd, 0, 0, (unsigned char *)device_info);
         submit(node);
         wait_for_finish();
         return 1;
@@ -265,6 +269,8 @@ long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buf
     if(cmd != ATA_READ_CMD && cmd != ATA_WRITE_CMD) return 0;
 
     node = make_request(cmd, blocks, count, buffer);
+    cli();
+    CURRENT->state = TASK_UNINTERRUPTABLE;
     submit(node);
     wait_for_finish();
     return 1;

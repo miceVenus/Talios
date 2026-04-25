@@ -12,7 +12,7 @@ typedef struct HwInterruptT{
     void (*enable)(unsigned long irq);
     void (*disable)(unsigned long irq);
 
-    unsigned long (*install)(unsigned long irq, void *arg);
+    void (*install)(unsigned long irq, void *arg);
     void (*uninstall)(unsigned long irq);
 
     void (*ack)(unsigned long irq);
