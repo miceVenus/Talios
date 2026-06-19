@@ -6,6 +6,7 @@
 
 __start:
 
+    movq    $1  ,   global_pid(%rip)
     mov     $SelectorData64,    %rax
 
     mov     %rax,    %ds

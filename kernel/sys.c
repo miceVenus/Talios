@@ -3,7 +3,11 @@
 #include "memory.h"
 #include "lib.h"
 #include "vfs.h"
+#include "unistd.h"
 #include "fcntl.h"
+#include "stdio.h"
+#include "sched.h"
+#include "task.h"
 
 unsigned long no_system_call(){
     ColorPrintfk(RED, BLACK, "here is no_system_call\n");
@@ -120,10 +124,98 @@ unsigned long sys_read(int fd, void * buf, unsigned long count){
         return -EINVAL;
     }
 
-    ColorPrintfk(BLUE, BLACK, "count : %d\n", count);
     file * filp = CURRENT->handle_array[fd];
 
     if(filp->f_ops && filp->f_ops->close) 
         ret = filp->f_ops->read(filp, buf, count, &filp->position);
     return ret;
+}
+
+unsigned long sys_write(int fd, void * buf, unsigned long count){
+    long ret;
+    if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
+        return -EBADF;
+    }
+
+    if(count < 0){
+        return -EINVAL;
+    }
+
+    ColorPrintfk(BLUE, BLACK, "count : %d\n", count);
+    file * filp = CURRENT->handle_array[fd];
+
+    if(filp->f_ops && filp->f_ops->close){
+        ret = filp->f_ops->write(filp, buf, count, &filp->position);
+    }
+
+    return ret;
+}
+
+unsigned long sys_lseek(int fd, long offset, int whence){
+    long ret;
+
+    if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
+        return -EBADF;
+    }
+
+    if(whence < 0 || whence >= SEEK_MAX){
+        return -EINVAL;
+    }
+
+    ColorPrintfk(GREEN, BLACK, "here is lseek\n");
+
+    file * filp = CURRENT->handle_array[fd];
+
+    if(filp->f_ops && filp->f_ops->close){
+        ret = filp->f_ops->lseek(filp, offset, whence);
+    }
+
+    return ret;
+}
+
+unsigned long sys_fork(){
+    long ret;
+
+    struct PtRegs * regs = (struct PtRegs *)CURRENT->thread->rsp0 - 1;
+
+    ColorPrintfk(GREEN, BLACK, "here is fork");
+
+    return do_fork(regs, 0, regs->rsp, 0);
+}
+
+unsigned long sys_vfork(){
+    long ret;
+
+    struct PtRegs * regs = (struct PtRegs *)CURRENT->thread->rsp0 - 1;
+
+    ColorPrintfk(GREEN, BLACK, "here is fork");
+
+    return do_fork(regs, CLONE_FS | CLONE_SIGNAL | CLONE_VM, regs->rsp, 0);
+}
+
+unsigned long sys_execve(char *path){
+    long ret;
+
+    struct PtRegs * regs = (struct PtRegs *)CURRENT->thread->rsp0 - 1;
+
+    ColorPrintfk(GREEN, BLACK, "here is execve");
+
+    return do_execve(regs, path);
+}
+
+unsigned long sys_brk(unsigned long brk){
+    ColorPrintfk(GREEN, BLACK, "here is brk");
+
+    unsigned long new_brk = PAGE_2M_ALIGN_DOWN(brk);
+    if(new_brk == 0)
+        return CURRENT->lmm->StartBrk;
+    
+    if(new_brk < CURRENT->lmm->EndBrk)
+        return 0;                       // release brk space
+
+    new_brk = do_brk(CURRENT->lmm->EndBrk, new_brk - CURRENT->lmm->EndBrk);
+
+    CURRENT->lmm->EndBrk = new_brk;
+
+    return new_brk;
 }

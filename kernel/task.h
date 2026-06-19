@@ -14,6 +14,7 @@
 // struct task_struct->flags
 #define PF_KTHREAD      (1UL << 0)
 #define NEED_SCHEDULE   (1UL << 1)
+#define PF_VFORK        (1UL << 2)
 
 #define NR_CPUS 16
 #define KERNEL_DS 0x10
@@ -37,6 +38,8 @@
     .preempt_count = 0,                 \
     .cpu_id     = 0,                    \
     .handle_array = {0},                \
+    .next       = &tsk,                 \
+    .parent     = &tsk,                 \
 }
 
 #define STOP   \
@@ -63,7 +66,14 @@
 
 #define CURRENT (GetCurrent())
 
+#define SWITCH_MM(prev, next)   \
+    do{                         \
+        __asm__ volatile(       \
+            "movq  %0,     %%cr3"::"r"(next->lmm->pgd):"memory" \
+        );                      \
+    }while (0);
 
+    
 #define SWITCH_TO(prev, next)   \
     do{                         \
         __asm__ volatile(       \
@@ -98,11 +108,15 @@ typedef unsigned long pml4t_t ;
 
 struct LocalMemManager{
     pml4t_t *pgd;
+
+    // all of this is addr
     unsigned long StartCode,    EndCode;
     unsigned long StartData,    EndData;
 
-    unsigned long StartROData,  EndROCode;
+    unsigned long StartRoData,  EndRoData;
     unsigned long StartBrk,     EndBrk;
+
+    unsigned long start_bss,    end_bss;
 
     unsigned long StartStack;
 };
@@ -143,6 +157,8 @@ typedef struct TaskStruct{
     long cpu_id;
 
     file * handle_array[MAX_HANDLE_PER_TASK];
+    struct TaskStruct * next;
+    struct TaskStruct * parent;
 
 }TaskStruct;
 
@@ -211,7 +227,8 @@ inline struct TaskStruct * GetCurrent(){
 }
 
 /*          TASK         */
-unsigned long DoFork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize);
+unsigned long do_fork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize);
+unsigned long do_execve(struct PtRegs * regs, char *name);
 void TaskInit();
 
 void    ret_from_intr(void);

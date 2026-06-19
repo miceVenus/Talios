@@ -2,6 +2,7 @@
 #include "printk.h"
 #include "lib.h"
 #include "task.h"
+#include "errno.h"
 
 void ListInit(struct List *list);
 
@@ -19,6 +20,7 @@ extern char _text;
 extern char _etext;
 extern char _edata;
 extern char _end;
+extern char _erodata;
 
 unsigned long ZoneDmaIndex;
 unsigned long ZoneNormalIndex;
@@ -500,6 +502,41 @@ unsigned int kfree(void *ptr){
     return 0;
 }
 
+unsigned long do_brk(unsigned long start, unsigned long size){
+
+    unsigned long * tmp     = NULL;
+    unsigned long * virtual = NULL;
+    struct Page *p          = NULL;
+    unsigned long i                   = 0;
+
+    for(i = start; i < start + size; i += PAGE_2M_SIZE){
+        tmp = PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL) + GetBits(i, PAGE_GDT_SHIFT, 9));
+        if(!(*tmp)){
+            virtual = kmalloc(PAGE_4K_SIZE, 0);
+            memset(virtual, 0, PAGE_4K_SIZE);
+            SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
+        }
+
+        tmp = PHY_TO_VIRT((unsigned long)tmp & (~0xfffUL) + GetBits(i, PAGE_1G_SHIFT, 9));
+        if(!(*tmp)){
+            virtual = kmalloc(PAGE_4K_SIZE, 0);
+            memset(virtual, 0, PAGE_4K_SIZE);
+            SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
+        } 
+        tmp = PHY_TO_VIRT((unsigned long)tmp & (~0xfffUL) + GetBits(i, PAGE_2M_SHIFT, 9));
+        if(!(*tmp)){
+            p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
+            if(p == NULL) return -ENOMEM;
+            SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
+        } 
+    }
+
+    CURRENT->lmm->EndBrk = i;
+    FlushTLB();
+    return i;
+}
+
+
 void InitMemory(){
 
     MMS = (struct GlobalMemManager){
@@ -510,7 +547,8 @@ void InitMemory(){
     MMS.StartCode   = (unsigned long)(&_text);
     MMS.EndCode     = (unsigned long)(&_etext);
     MMS.EndData     = (unsigned long)(&_edata);
-    MMS.EndBrk      = (unsigned long)(&_end);
+    MMS.EndRoData   = (unsigned long)(&_erodata);
+    MMS.StartBrk      = (unsigned long)(&_end);
     
 
     ColorPrintfk(BLUE, BLACK, "TYPE(1. Normal RAM, 2. ROM OR Reserved, 3. ACPI Reclaimable Memory,\
@@ -561,7 +599,7 @@ void InitMemory(){
                     
     // Init BitsMap
 
-    MMS.BitsMap = (unsigned long *)MEM_GAP_ALIGN(MMS.EndBrk);
+    MMS.BitsMap = (unsigned long *)MEM_GAP_ALIGN(MMS.StartBrk);
     MMS.BitsMapCount = TotalMemory >> PAGE_2M_SHIFT;
 
     MMS.BitsMapLength = ((TotalMemory >> PAGE_2M_SHIFT) + 7) >> 3;

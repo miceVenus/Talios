@@ -85,6 +85,7 @@ void schedule(){
                     break;
             }
             // ColorPrintfk(BLUE, BLACK, "schedule happened, %X, %X\n", current, task);
+            SWITCH_MM(current, task);
             SWITCH_TO(current, task);
         }
     }else{

@@ -1,5 +1,5 @@
-#ifndef UNISTD_H
-#define UNISTD_H
+#ifndef SYSCALL_H
+#define SYSCALL_H
 
 #define __NR_putstring  1
 #define __NR_open       2
@@ -11,7 +11,5 @@
 #define __NR_vfork      8
 #define __NR_execve     9
 #define __NR_brk        10
-
-
 
 #endif

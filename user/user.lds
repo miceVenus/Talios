@@ -1,16 +1,15 @@
 OUTPUT_FORMAT("elf64-x86-64","elf64-x86-64","elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
 
-ENTRY(__start)
+ENTRY(main)
 
 SECTIONS
 {
-    . = 0xffff800000000000 + 0x00100000;
+    . = 0x800000;
 
     .text : {
         _text = .;
-        build/head.o(__start)
-        *(.text*)
+        build/init_user.o(.text)
         _etext = .;
     }
 
@@ -29,10 +28,6 @@ SECTIONS
     }
 
     . = ALIGN(32768);
-    
-    .data.init_task : {
-        *(.data.init_task)
-    }
 
     .bss : {
         _bss = .;
@@ -40,10 +35,5 @@ SECTIONS
         *(COMMON)
         _ebss = .;
         _end  = .;
-    }
-
-    /DISCARD/ : {
-        *(.eh_frame)
-        *(.comment)
     }
 }

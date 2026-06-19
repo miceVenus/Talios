@@ -31,21 +31,27 @@ KENRELDIR	:= 	kernel
 TESTDIR 	:= 	kernel/test
 OBJDIR 		:= 	build
 BINDIR 		:= 	bin
+USERDIR		:= 	user
 
 # THIS IS AN ELF
 TARGET		:= 	$(BINDIR)/system.bin
+USER_TARGET	:= 	$(BINDIR)/user.bin
 
 KERNELBIN	:= 	$(BINDIR)/kernel.bin
+INITBIN		:= 	$(BINDIR)/init.bin
 
 KERNEL_SRCS  	:= 	$(wildcard $(KENRELDIR)/*.c)
+USER_SRCS  		:= 	$(wildcard $(USERDIR)/*.c)
 AS_SRCS 	:=	$(wildcard $(KENRELDIR)/*.S)
 TEST_SRCS 	:=	$(wildcard $(TESTDIR)/*.c)
 NAS_SRCS	:= 	$(wildcard $(BIOSDIR)/*.asm)
 
 OBJS    	:= 	$(patsubst $(KENRELDIR)/%.c,$(OBJDIR)/%.o,$(KERNEL_SRCS)) \
            		$(patsubst $(KENRELDIR)/%.S,$(OBJDIR)/%.o,$(AS_SRCS))\
-				$(patsubst $(TESTDIR)/%.c,$(OBJDIR)/%.o,$(TEST_SRCS))
-				
+				$(patsubst $(TESTDIR)/%.c,$(OBJDIR)/%.o,$(TEST_SRCS)) \
+
+USER_OBJS	:= 	$(patsubst $(USERDIR)/%.c,$(OBJDIR)/%_user.o,$(USER_SRCS))
+
 
 TEST		:= 	$(patsubst $(TESTDIR)/%.c,$(OBJDIR)/%.o,$(TEST_SRCS))
 
@@ -53,12 +59,19 @@ BOOTLOADER	:= 	$(patsubst $(BIOSDIR)/%.asm,$(BINDIR)/%.bin,$(NAS_SRCS))
 
 DEPS    	:= 	$(OBJS:.o=.d)
 
+USER_DEPS	:= 	$(USER_OBJS:.o=.d)
+
 #BOOTLOADER ASSMBLE RULE
 $(BINDIR)/%.bin: $(BIOSDIR)/%.asm | $(BINDIR)
 	$(NAS) $(NASFLAGS) $< -o $@
 
 # KERNEL COMPILE RULE
 $(OBJDIR)/%.o: $(KENRELDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+# USER COMPILE RULE
+$(OBJDIR)/%_user.o: $(USERDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # TEST COMPILE RULE
@@ -74,15 +87,22 @@ $(OBJDIR)/%.o: $(KENRELDIR)/%.S | $(OBJDIR)
 # LINKER
 $(TARGET): $(OBJS) $(KENRELDIR)/kernel.lds | $(BINDIR)
 	$(LD) $(LDFLAGS) -T $(KENRELDIR)/kernel.lds -o $@ $(OBJS)
-	
+
+# FOR USER
+$(USER_TARGET): $(USER_OBJS) $(USERDIR)/user.lds | $(BINDIR)
+	$(LD) $(LDFLAGS) -T $(USERDIR)/user.lds -o $@ $(USER_OBJS)
+
 $(OBJDIR) $(BINDIR):
 	mkdir -p $@
 
 $(KERNELBIN): $(TARGET)
 	$(OBJCOPY) $(CPFLAGS) -O binary $< $@
 
+$(INITBIN): $(USER_TARGET) | $(BINDIR)
+	$(OBJCOPY) $(CPFLAGS) -O binary $< $@
+
 .PHONY: all
-all: $(KERNELBIN) $(BOOTLOADER)
+all: $(KERNELBIN) $(BOOTLOADER) $(INITBIN)
 
 .PHONY: run
 run: all $(BOCHSFILE)

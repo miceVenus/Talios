@@ -128,7 +128,8 @@ struct GlobalMemManager{
     unsigned long   StartCode;
     unsigned long   EndCode;
     unsigned long   EndData;
-    unsigned long   EndBrk;
+    unsigned long   EndRoData;
+    unsigned long   StartBrk;
 
     // MemPageManagerStruct End
     unsigned long   EndStruct;
