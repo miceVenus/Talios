@@ -6,6 +6,8 @@
 #include "disk.h"
 
 #define FS_ATTR_DIR 0
+#define FS_ATTR_FILE 1
+#define FS_ATTR_DEVICE 2
 
 #define BYTE_PER_VSEC 512
 #define BYTE_PER_VSEC_SHIFT 9

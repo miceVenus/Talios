@@ -11,5 +11,6 @@
 #define __NR_vfork      8
 #define __NR_execve     9
 #define __NR_brk        10
+#define __NR_ioctl      11
 
 #endif

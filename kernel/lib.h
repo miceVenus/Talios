@@ -175,6 +175,9 @@ inline int ListIsEmpty(struct List *list){
 inline int ListDelete(struct List *list){
     list->prev->next = list->next;
     list->next->prev = list->prev;
+    
+    list->prev = list;
+    list->next = list;
     return 1;
 }
 

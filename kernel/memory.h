@@ -20,8 +20,11 @@
 #define PAGE_2M_MASK    (~ (PAGE_2M_SIZE - 1))
 #define PAGE_4K_MASK    (~ (PAGE_4K_SIZE - 1))
 
+// means smaller
 #define PAGE_2M_ALIGN_DOWN(addr) ((unsigned long)(addr) & PAGE_2M_MASK)
 #define PAGE_4K_ALIGN_DOWN(addr) ((unsigned long)(addr) & PAGE_4K_MASK)
+
+// means bigger
 #define PAGE_2M_ALIGN_UP(addr) (((unsigned long)(addr) + PAGE_2M_SIZE - 1) & PAGE_2M_MASK)
 #define PAGE_4K_ALIGN_UP(addr) (((unsigned long)(addr) + PAGE_4K_SIZE - 1) & PAGE_4K_MASK)
 
@@ -200,6 +203,6 @@ struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)
                                     void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg);
 struct Slab* CreatSlab(unsigned long size, int ZoneSelector);
 void InitPageTable();
-
+unsigned long do_brk(unsigned long start, unsigned long size);
 
 #endif

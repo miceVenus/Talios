@@ -61,8 +61,9 @@ struct file_system_type FAT32_filesystem = {
 
 void fsde(char *buf, char *name){
     int i = 0, j = 0;
-    for(i = 0; i < 11; i++){
+    for(i = 0; i < StringLen(name); i++){
         if(name[i] == ' ') continue;
+        if(name[i] == '.') continue;
         buf[j++] = name[i];
     }
     buf[j] = '\0';
@@ -134,10 +135,10 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
 
     char * disk_buf = kmalloc(fsb_info->byte_per_clus, 0);
 
-    clus = finode->first_cluster;
+    clus = finode->first_cluster & (~0xf0000000);
 
     while(clus != 0){
-        lba = CLUS_TO_LBA(fsb_info->fst_data_sector, finode->first_cluster, fsb_info->sec_per_clus);
+        lba = CLUS_TO_LBA(fsb_info->fst_data_sector, clus, fsb_info->sec_per_clus);
         ide_transfer(ATA_READ_CMD, lba, fsb_info->sec_per_clus, (unsigned char*)disk_buf);
         entry = (FAT32_Directory*)disk_buf;
 
@@ -159,7 +160,10 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
                     if(!strcmp(dir->name, lname_buf)) goto found_target_dir;
                 }else{
                     fsde(sname_buf, (char *)((entry+i)->dir_name));
-                    if(!strcmp(dir->name, sname_buf)) goto found_target_dir;
+
+                    // just borrow it
+                    fsde(lname_buf, dir->name);
+                    if(!strcmp(lname_buf, sname_buf)) goto found_target_dir;
                 }
                 memset(lname_buf, 0, 256);
             }
@@ -173,6 +177,9 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
                 tnode->inode_ops = &FAT32_inode_ops;
                 tnode->sb = fsb;
                 tnode->file_size = (entry + i)->dir_file_size;
+                
+                tnode->attribute = ((entry + i)->dir_attr == ATTR_DIRECTORY) ? FS_ATTR_DIR : FS_ATTR_FILE;
+
                 tnode->blocks = (tnode->file_size + fsb_info->byte_per_clus - 1) >> BYTE_PER_VSEC_SHIFT;
                 FAT32_inode_info* tinfo = (FAT32_inode_info*)kmalloc(sizeof(FAT32_inode_info), 0);
                 memset(tnode, sizeof(FAT32_inode_info), 0);
@@ -180,12 +187,15 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
                 tinfo->create_date = (entry + i)->dir_crt_Date;
                 tinfo->create_time = (entry + i)->dir_crt_time;
                 tinfo->dentry_location = clus;
-                tinfo->dentry_position = (entry + i) - entry;
+                tinfo->dentry_position = i;
                 tinfo->write_date = (entry + i)->dir_wrt_date;
                 tinfo->write_time = (entry + i)->dir_wrt_time;
                 tnode->private_index_info = (void *)tinfo;
                 dir->dir_node = tnode;
                 dir->dir_ops = &FAT32_dir_ops;
+                if((entry + i)->dir_fst_clus_hi >> 12 && (tnode->attribute & FS_ATTR_FILE)){
+                    dir->dir_node->attribute |= FS_ATTR_DEVICE;
+                }
                 kfree(disk_buf);
 
                 return dir;
@@ -446,16 +456,20 @@ void fat32_write_inode(index_node * inode){
     FAT32_inode_info * inode_info = (FAT32_inode_info *)inode->private_index_info;
     FAT32_sb_info * sb_info = fsb->private_sb_info;
     FAT32_Directory * buf = kmalloc(sizeof(sb_info->byte_per_clus), 0);
-    ide_transfer(ATA_READ_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_position, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
-    FAT32_Directory * tentry = (FAT32_Directory *)((char *)buf + inode_info->dentry_location);
+    ide_transfer(ATA_READ_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
+    FAT32_Directory * tentry = (FAT32_Directory *)(buf + inode_info->dentry_position);
     tentry->dir_file_size = inode->file_size;
     tentry->dir_fst_clus_hi = GetBits(inode_info->first_cluster, 16, 16);
     tentry->dir_fst_clus_lo = GetBits(inode_info->first_cluster, 0, 16);
     tentry->dir_wrt_date = inode_info->write_date;
     tentry->dir_wrt_time = inode_info->write_time;
 
-    ide_transfer(ATA_WRITE_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_position, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
+    ide_transfer(ATA_WRITE_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
 
+    FAT32_Directory * buf1 = kmalloc(sizeof(sb_info->byte_per_clus), 0);
+    ide_transfer(ATA_READ_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
+    FAT32_Directory * tentry1 = (FAT32_Directory *)(buf + inode_info->dentry_position);
+    
     kfree(buf);
 }
 

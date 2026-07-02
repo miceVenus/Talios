@@ -111,6 +111,7 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     __asm__ volatile("movq %0,      %%fs":: "r"(next->thread->fs));
     __asm__ volatile("movq %0,      %%gs":: "r"(next->thread->gs));
 
+    prev->preempt_count--;
     // ColorPrintfk(color, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
     // ColorPrintfk(color, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
     // bochs_bp();
@@ -118,118 +119,28 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
 
 void UserLevelFunc(){
 
-    // Can`t Be Called
-    // ColorPrintfk(BLUE, BLACK, "In User Level\n");
-    
-    char string[] = "/SJKLDJLK/shdadhajskh/SAD/LLLKSNNMM.txt";
-    char string2[] = "fuck you fuck you fuck you\n";
-    char buf[512];
-    long errono = 0;
-    unsigned long fd;
-
-    // OPEN
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_open), "D"(string), "S"(0):"memory");
-
-    fd = errono;
-    // read
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_read), "D"(fd), "S"(buf), "d"(17):"memory");
-
-    // memset(buffer, 'a', 6);
-
-    // write
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_write), "D"(fd), "S"(string2), "d"(30):"memory");
-
-    // lseek
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_lseek), "D"(fd), "S"(0), "d"(SEEK_SET):"memory");
-    // read
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_read), "D"(fd), "S"(buf), "d"(60):"memory");
-
-    // put string
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_putstring), "D"(buf):"memory");
-
-    // CLOSE
-    __asm__ volatile(   "pushq  %%r11                                   \n\t"
-                        "pushq  %%r10                                   \n\t"
-                        "leaq 1f(%%rip),   %%r10    \n\t"
-                        "movq   %%rsp,  %%r11                           \n\t"
-                        "sysenter                                       \n\t"
-                        "1:                        \n\t"
-                        "xchgq  %%rdx,  %%r10                           \n\t"
-                        "xchgq  %%rcx,  %%r11                           \n\t"
-                        "popq   %%r10                                   \n\t"
-                        "popq   %%r11                                   \n\t"
-                        :"=a"(errono):"0"(__NR_close), "D"(fd):"memory");
     while(1){
 
     };
 }
 
+void make_keyboard_file(){
+    char string[] = "/KEYBOARD.DEV";
+
+    dir_entry * dentry = path_walk(string, 0);
+
+    if(!dentry){ColorPrintfk(RED, BLACK, "error in create keyboardfile which located in %s\n", string);}
+
+    ((FAT32_inode_info *)dentry->dir_node->private_index_info)->first_cluster |= 0xf0000000;
+    dentry->dir_node->sb->sb_ops->write_inode(dentry->dir_node);
+}
 
 unsigned long init(unsigned long arg){
     ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
 
     struct PtRegs* regs;
     DISK1_FAT32_FS_INIT();
+    make_keyboard_file();
 
     CURRENT->thread->rip = (unsigned long)ret_system_call;
     CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
@@ -313,7 +224,7 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
         memset(PHY_TO_VIRT(CURRENT->lmm->pgd), 0, PAGE_4K_SIZE / 2);
     }
 
-    tmp = PHY_TO_VIRT((unsigned long *)((unsigned long)CURRENT->lmm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9));
+    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9);
 
     if(*tmp == NULL){
         unsigned long * virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
@@ -321,7 +232,7 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
         SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
     }
 
-    tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9)));
+    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9);
 
     if(*tmp == NULL){
         virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
@@ -329,7 +240,7 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
         SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
     }
 
-    tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9)));
+    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9);
     
     if(*tmp == NULL){
         struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
@@ -340,8 +251,6 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
 
     if(!(CURRENT->flags & PF_KTHREAD))
     CURRENT->AddrLimit = TASK_SIZE;
-
-    memset(CURRENT->lmm, 0, sizeof(struct LocalMemManager));
 
     CURRENT->lmm->StartCode     = code_start_addr;
     CURRENT->lmm->StartStack    = stack_start_addr;
@@ -382,9 +291,10 @@ unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long a
     return do_fork(&regs, flag | CLONE_VM, 0, 0);
 }
 
-inline void wakeup_process(TaskStruct * task){
+void wakeup_process(TaskStruct * task){
     task->state = TASK_RUNING;
     insert_task_queue(task);
+    CURRENT->flags |= NEED_SCHEDULE;
 }
 
 inline long copy_flags(unsigned long flags, TaskStruct * task){
@@ -448,16 +358,18 @@ inline long copy_mm(unsigned long flags, TaskStruct * task){
 
     memset(PHY_TO_VIRT(t_mm->pgd), 0, PAGE_4K_SIZE / 2);
 
-    unsigned long * tmp = PHY_TO_VIRT((unsigned long *)((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9));
+    unsigned long * tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9);
 
     unsigned long * virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
     memset(virtual, 0, PAGE_4K_SIZE);
     SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-    tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9)));
+
+    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9);
     virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
     memset(virtual, 0, PAGE_4K_SIZE);
     SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-    tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9)));
+
+    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9);
     struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
     SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
 
@@ -465,9 +377,9 @@ inline long copy_mm(unsigned long flags, TaskStruct * task){
 
     if(CURRENT->lmm->StartBrk - CURRENT->lmm->EndBrk != 0){
 
-        tmp = PHY_TO_VIRT((unsigned long *)((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_GDT_SHIFT, 9));
-        tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_1G_SHIFT, 9)));
-        tmp = PHY_TO_VIRT(((unsigned long *)(*tmp & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_2M_SHIFT, 9)));
+        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_GDT_SHIFT, 9);
+        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_1G_SHIFT, 9);
+        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_2M_SHIFT, 9);
         struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
         SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
 
@@ -551,7 +463,7 @@ unsigned long do_fork(struct PtRegs * regs, unsigned long CloneFlag, unsigned lo
     memset(tsk, 0, sizeof(struct TaskStruct));
     memcopy(current, tsk, sizeof(TaskStruct));
     ListInit(&tsk->list);
-    ListForeAdd(&(current->list), &tsk->list);
+    // ListForeAdd(&(current->list), &tsk->list);
     tsk->next = current->next;
     current->next = tsk;
     tsk->parent = current;

@@ -13,49 +13,72 @@ int ListIsEmpty(struct List * list);
 void ListForeAdd(struct List *new, struct List *list);
 
 struct TaskStruct * get_next_task(){
+
+    // long flags = get_rflags();
+    // cli();
+
     scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
     union TaskUnion *InitTaskUnion = InitTaskUnions[CURRENT->cpu_id];
     TaskStruct * task = NULL;
 
     if(ListIsEmpty(&task_scheduler->task_queue.list)){
         // ColorPrintfk(BLUE, BLACK, "empty task queue, %X\n", CURRENT->cpu_id);
-        task_scheduler->min_vrun_time = InitTaskUnion->task.vrun_time;
-        return &InitTaskUnion->task;
+        task_scheduler->min_vrun_time = CURRENT->vrun_time;
+        task = &InitTaskUnion->task;
+        goto out;
     }
 
     task = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list);
     ListDelete(&task->list);
     task_scheduler->running_task_count -= 1;
 
-    if(ListIsEmpty(&task_scheduler->task_queue.list))
-        task_scheduler->min_vrun_time = InitTaskUnion->task.vrun_time;
-    else
-        task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
-        
-    return task;
+    // task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
+    
+    task_scheduler->min_vrun_time = min(task->vrun_time, CURRENT->vrun_time);
+    // if(ListIsEmpty(&task_scheduler->task_queue.list))
+    //     task_scheduler->min_vrun_time = task->vrun_time;
+    // else
+    //     task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
+
+    out:
+        // if(flags & 0x200) sti();
+        return task;
 }
 
 void insert_task_queue(TaskStruct * task){
+    // long flags = get_rflags();
+    // cli();
+
     union TaskUnion *InitTaskUnion = InitTaskUnions[CURRENT->cpu_id];
     scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
 
     TaskStruct * tmp = ContainerOf(ListNext(&task_scheduler->task_queue.list), TaskStruct, list);
     if(task == &InitTaskUnion->task){
-        // ColorPrintfk(BLUE, BLACK, "try to insert IDLE TASK\n");
-        return;
+        goto out;
     }
     if(ListIsEmpty(&task_scheduler->task_queue.list)){
 
     }else{
-        while(tmp->vrun_time < task->vrun_time)
+        while(tmp->vrun_time <= task->vrun_time){
+            if(tmp == task) goto out;
             tmp = ContainerOf(ListNext(&tmp->list), TaskStruct, list);
+        }
     }
     ListForeAdd(&task->list, &tmp->list);
+
     task_scheduler->running_task_count += 1;
-    task_scheduler->min_vrun_time = min(task_scheduler->min_vrun_time, task->vrun_time);   
+    task_scheduler->min_vrun_time = min(task_scheduler->min_vrun_time, task->vrun_time);
+    
+    out:
+
+        return;
+        // if(flags & 0x200) 
+        //     sti();
 }
 
 void schedule(){
+
+    CURRENT->preempt_count++;
     scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
     struct TaskStruct *current = CURRENT;
     current->flags &= (~NEED_SCHEDULE);
@@ -67,12 +90,15 @@ void schedule(){
         // if current == task it is means this schedule is not start from interruption
         // so it would break some thing
         if(current == task){
-            insert_task_queue(task);
-            return;
+            goto no_switch_out;
         }
 
+        // make task priority has its sense for now we have not perserve task`s cpu time
+        task_scheduler->CPU_exec_task_jiffies = 0;
+        
         if(current->state == TASK_RUNING)
             insert_task_queue(current);
+
         if(task_scheduler->CPU_exec_task_jiffies <= 0){
             switch(task->priority){
                 case 0:
@@ -84,10 +110,12 @@ void schedule(){
                     task_scheduler->CPU_exec_task_jiffies = 4 / task_scheduler->running_task_count * 3;
                     break;
             }
-            // ColorPrintfk(BLUE, BLACK, "schedule happened, %X, %X\n", current, task);
-            SWITCH_MM(current, task);
-            SWITCH_TO(current, task);
         }
+
+        SWITCH_MM(current, task);
+        SWITCH_TO(current, task);
+
+        return;
     }else{
         insert_task_queue(task);
         if(!task_scheduler->CPU_exec_task_jiffies){
@@ -103,6 +131,10 @@ void schedule(){
             }
         }
     }
+
+    no_switch_out:
+        CURRENT->preempt_count--;
+        return;
 }
 
 void scheduler_init(){
@@ -113,7 +145,7 @@ void scheduler_init(){
         task_scheduler->CPU_exec_task_jiffies    = 4;
         task_scheduler->running_task_count       = 1;
         ListInit(&task_scheduler->task_queue.list);
-        task_scheduler->min_vrun_time = CURRENT->vrun_time;
+        task_scheduler->min_vrun_time            = CURRENT->vrun_time;
         task_scheduler->task_queue.vrun_time     = 0x7fffffffffffffff;
     }
 }

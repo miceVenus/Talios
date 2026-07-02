@@ -510,20 +510,20 @@ unsigned long do_brk(unsigned long start, unsigned long size){
     unsigned long i                   = 0;
 
     for(i = start; i < start + size; i += PAGE_2M_SIZE){
-        tmp = PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL) + GetBits(i, PAGE_GDT_SHIFT, 9));
+        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL))) + GetBits(i, PAGE_GDT_SHIFT, 9);
         if(!(*tmp)){
             virtual = kmalloc(PAGE_4K_SIZE, 0);
             memset(virtual, 0, PAGE_4K_SIZE);
             SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
         }
 
-        tmp = PHY_TO_VIRT((unsigned long)tmp & (~0xfffUL) + GetBits(i, PAGE_1G_SHIFT, 9));
+        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL))) + GetBits(i, PAGE_1G_SHIFT, 9);
         if(!(*tmp)){
             virtual = kmalloc(PAGE_4K_SIZE, 0);
             memset(virtual, 0, PAGE_4K_SIZE);
             SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
         } 
-        tmp = PHY_TO_VIRT((unsigned long)tmp & (~0xfffUL) + GetBits(i, PAGE_2M_SHIFT, 9));
+        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL))) + GetBits(i, PAGE_2M_SHIFT, 9);
         if(!(*tmp)){
             p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
             if(p == NULL) return -ENOMEM;
@@ -728,6 +728,7 @@ void InitPageTable(){
 
             if(*tmp == 0){
                 void *virtual = kmalloc(PAGE_4K_SIZE, 0);
+                memset(virtual, 0, PAGE_4K_SIZE);
                 SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
             }
             tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
@@ -735,6 +736,7 @@ void InitPageTable(){
             
             if(*tmp == 0){
                 void *virtual = kmalloc(PAGE_4K_SIZE, 0);
+                memset(virtual, 0, PAGE_4K_SIZE);
                 SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
             }
 

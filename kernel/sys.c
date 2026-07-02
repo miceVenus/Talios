@@ -8,6 +8,9 @@
 #include "stdio.h"
 #include "sched.h"
 #include "task.h"
+#include "fat32.h"
+
+extern file_operations keyboard_operation;
 
 unsigned long no_system_call(){
     ColorPrintfk(RED, BLACK, "here is no_system_call\n");
@@ -15,8 +18,8 @@ unsigned long no_system_call(){
 }
 
 unsigned long sys_putstring(char *string){
-    ColorPrintfk(GREEN, BLACK, "here is sys_putstring\n");
-    ColorPrintfk(BLUE, BLACK, "%s\n", string);
+    // ColorPrintfk(GREEN, BLACK, "here is sys_putstring\n");
+    ColorPrintfk(BLUE, BLACK, "%s", string);
     return 0;
 }
 
@@ -55,9 +58,15 @@ unsigned long sys_open(char * filename, int flag){
     file * filp = (file *) kmalloc(sizeof(file), 0);
     memset(filp, 0, sizeof(file));
     filp->dentry = dentry;
-    filp->f_ops = dentry->dir_node->f_ops;
     filp->mode = flag;
 
+    if(dentry->dir_node->attribute & FS_ATTR_DEVICE){
+        filp->f_ops = &keyboard_operation;
+    }else{
+        filp->f_ops = dentry->dir_node->f_ops;
+    }
+
+    
     if(filp->f_ops && filp->f_ops->open)
         errno = filp->f_ops->open(dentry->dir_node, filp);
     
@@ -98,23 +107,38 @@ unsigned long sys_open(char * filename, int flag){
 
 unsigned long sys_close(int fd){
 
+    unsigned long res;
     if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
         return -EBADF;
     }
     file * filp = CURRENT->handle_array[fd];
 
     if(filp->f_ops && filp->f_ops->close) 
-        filp->f_ops->close(filp->dentry->dir_node, filp);
-    
+        res = filp->f_ops->close(filp->dentry->dir_node, filp);
+
     kfree(filp);
 
     CURRENT->handle_array[fd] = NULL;
-    return 0;
+    return res;
+}
+
+unsigned long sys_ioctl(int fd, unsigned long request, void * args){
+    unsigned long res;
+    if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
+        return -EBADF;
+    }
+
+    file * filp = CURRENT->handle_array[fd];
+    if(filp->f_ops && filp->f_ops->ioctl){
+        res = filp->f_ops->ioctl(filp->dentry->dir_node, filp, request, (unsigned long)args);
+    }
+    return res;
 }
 
 
 unsigned long sys_read(int fd, void * buf, unsigned long count){
 
+    // ColorPrintfk(BLUE, BLACK, "here is read");
     long ret;
     if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
         return -EBADF;
@@ -204,18 +228,19 @@ unsigned long sys_execve(char *path){
 }
 
 unsigned long sys_brk(unsigned long brk){
-    ColorPrintfk(GREEN, BLACK, "here is brk");
 
-    unsigned long new_brk = PAGE_2M_ALIGN_DOWN(brk);
+    TaskStruct *cur = CURRENT;
+
+    unsigned long new_brk = PAGE_2M_ALIGN_UP(brk);
     if(new_brk == 0)
-        return CURRENT->lmm->StartBrk;
+        return cur->lmm->StartBrk;
     
-    if(new_brk < CURRENT->lmm->EndBrk)
+    if(new_brk < cur->lmm->EndBrk)
         return 0;                       // release brk space
 
-    new_brk = do_brk(CURRENT->lmm->EndBrk, new_brk - CURRENT->lmm->EndBrk);
+    new_brk = do_brk(cur->lmm->EndBrk, new_brk - cur->lmm->EndBrk);
 
-    CURRENT->lmm->EndBrk = new_brk;
+    cur->lmm->EndBrk = new_brk;
 
     return new_brk;
 }

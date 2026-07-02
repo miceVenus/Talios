@@ -235,6 +235,7 @@ void    ret_from_intr(void);
 void    ret_system_call(void);
 void    KernelThreadFunc(void);
 void    __Switch_To(struct TaskStruct *prev, struct TaskStruct *next);
+void    wakeup_process(TaskStruct * task);
 
 
 /*          SYSCALL         */

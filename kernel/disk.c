@@ -287,9 +287,16 @@ void end_request(struct block_buffer_node *node){
         cmd_out();
 
     node->wait_queue.tsk->state = TASK_RUNING;
-    node->wait_queue.tsk->flags |= NEED_SCHEDULE;
-    node->wait_queue.tsk->vrun_time = max(node->wait_queue.tsk->vrun_time, task_schedulers[CURRENT->cpu_id].min_vrun_time - 2);
+    scheduler * ts = &task_schedulers[CURRENT->cpu_id];
+    // if(ListIsEmpty(&ts->task_queue.list))
+    //     node->wait_queue.tsk->vrun_time = CURRENT->vrun_time > 4 ? CURRENT->vrun_time - 4 : 0;
+    // else{
+    //     node->wait_queue.tsk->vrun_time = max(node->wait_queue.tsk->vrun_time, ts->min_vrun_time - 2);
+    // }
+
     insert_task_queue(node->wait_queue.tsk);
+    // task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies = 0;
+    CURRENT->flags |= NEED_SCHEDULE;
 }
 
 void get_disk_id_handler(unsigned long nr, unsigned long arg){

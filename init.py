@@ -50,6 +50,7 @@ gdb.events.stop.connect(stop_handler)
 gdb.execute('target remote 127.0.0.1:1234')
 gdb.execute('directory "/home/bbm/workspace/System Dev/Talios/kernel"')
 gdb.execute('directory "/home/bbm/workspace/System Dev/Talios/bootloader"')
+gdb.execute('add-symbol-file "/home/bbm/workspace/System Dev/Talios/bin/user.bin" 0x800000')
 gdb.execute('symbol-file "/home/bbm/workspace/System Dev/Talios/bin/system.bin"')
 gdb.execute('set architecture i386:x86-64')
 gdb.execute('set disassembly-flavor intel')
@@ -57,4 +58,4 @@ gdb.execute('set disassembly-flavor intel')
 # User program entry
 gdb.execute('b *0x100000')  # __start
 gdb.execute('continue')
-gdb.execute('b main')  # main
+gdb.execute('b *0x800000')  # user_main

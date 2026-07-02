@@ -36,6 +36,7 @@ void __release(semaphore_t *semaphore){
     ListDelete(&wait->wait_list);
     wait->tsk->state = TASK_RUNING;
     insert_task_queue(wait->tsk);
+    CURRENT->flags |= NEED_SCHEDULE;
 }
 
 void semaphore_release(semaphore_t *semaphore){
@@ -43,11 +44,6 @@ void semaphore_release(semaphore_t *semaphore){
         atomic_inc(&semaphore->counter);
     else
         __release(semaphore);
-}
-
-void wait_queue_init(wait_queue_t * wait_queue, struct TaskStruct *tsk){
-    ListInit(&wait_queue->wait_list);
-    wait_queue->tsk = tsk;
 }
 
 void semaphore_init(semaphore_t *semaphore, unsigned long count){

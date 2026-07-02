@@ -13,9 +13,9 @@ static unsigned long brk_used   = 0;
 
 void *malloc(unsigned long size){
     unsigned long addr = 0;
-    if(!brk_start) brk_start = brk_used = brk(brk_start);
+    if(!brk_start) brk_start = brk_used = brk_end = brk(brk_start);
     if(brk_end <= brk_used + size + SIZE_ALIGN)
-        brk_end = brk(brk_end + ((size + SIZE_ALIGN + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)));
+        brk_end = brk(brk_used + ((size + SIZE_ALIGN + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)));
 
     addr = brk_used;
     brk_used += size + SIZE_ALIGN;

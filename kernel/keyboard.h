@@ -29,6 +29,7 @@
 #define WAIT_KB_WRITE() while(IN8b(KB_STATUS_PORT) & KB_STATUS_IBF);
 #define WAIT_KB_READ() while(IN8b(KB_STATUS_PORT) & KB_STATUS_OBF);
 
+#define KEY_CMD_RESET_BUFFER 1
 
 
 typedef struct KeyboardInBuf{

@@ -3,13 +3,9 @@
 
 #include "atomic.h"
 #include "lib.h"
+#include "waitqueue.h"
 
 struct TaskStruct;
-
-typedef struct wait_queue_t{
-    struct List wait_list;
-    struct TaskStruct *tsk;
-}wait_queue_t;
 
 typedef struct semaphore_t{
     atomic_t counter;

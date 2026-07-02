@@ -43,3 +43,37 @@ __asm__ (
     "orq    $-1,        %rax                        \n\t"
     "LABEL_SYSCALL_RET:                             \n\t"
     "retq                                           \n\t");
+
+
+
+/*
+
+*/
+void memset(void *Src, char num, unsigned long n){
+    char *src = (char *)Src;
+    char *dst = src + n;
+    while(src < dst) *(src++) = num;
+}
+
+/*
+
+*/
+void memcopy(void *Src, void *Dst, unsigned long n){
+
+    char *src = (char *)Src;
+    char *dst = (char *)Dst;
+
+    short int IsBackcopy = 0;
+    unsigned long SrcPtr = (unsigned long)src;
+    unsigned long DstPtr = (unsigned long)dst;
+
+    IsBackcopy = (DstPtr > SrcPtr && DstPtr < SrcPtr + n);
+
+    if(IsBackcopy){
+        dst = dst + n - 1;
+        src = src + n - 1;
+        while (n--) *(dst--) = *(src--);
+    }else{
+        while (n--) *(dst++) = *(src++);
+    }
+}

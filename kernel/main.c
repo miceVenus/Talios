@@ -143,9 +143,9 @@ void main(){
     // icr_entry.vector = 0xc9;
     // wrmsr(0x830, *(unsigned long*)&icr_entry);
 
-
+    BRK();
     while (1){
-        AnalyzeKeyCode();
+        // AnalyzeKeyCode();
     }
 
 }

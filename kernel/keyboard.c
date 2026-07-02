@@ -273,229 +273,70 @@ unsigned char KeyCodeMapNormal[NR_SCAN_CODES * MAP_COLS] = {
     0,
 };
 
+
 static KeyboardInBuf *KBIB;
 static HwInterruptT KBController;
 static int ShiftL, ShiftR, CtrlL, CtrlR, AltL, AltR, Caps;
 
-unsigned char GetScanCode()
-{
+wait_queue_t keyboard_wait_queue;
 
-    unsigned char x;
-
-    if (KBIB->count == 0)
-        while (KBIB->count == 0)
-            nop();
-
-    if (KBIB->PTail == (KBIB->buf + KB_BUF_SIZE))
-        KBIB->PTail = KBIB->buf;
-    x = *(KBIB->PTail++);
-    KBIB->count--;
-
-    // ColorPrintfk(RED, BLACK, "IN PUT BUFFER %d\n", KBIB->count);
-    return x;
+int keyboard_close(index_node *inode, file *filp){
+    filp->private_data = NULL;
+    KBIB->PHead = KBIB->buf;
+    KBIB->PTail = KBIB->buf;
+    KBIB->count = 0;
+    memset(KBIB->buf, 0, KB_BUF_SIZE);
+    return 1;
 }
-void AnalyzeKeyCode()
-{
-    unsigned char x;
-    int i;
-    unsigned char key = 0;
-    int make = 0;
 
-    x = GetScanCode();
-    if (x == 0xe1)
-    {
-        for (i = 1; i < PB_CODE_SIZE; i++)
-            if (GetScanCode() != PauseBreakCode[i])
-                break;
+int keyboard_open(index_node *inode, file *filp){
+    filp->private_data = KBIB;
+    KBIB->PHead = KBIB->buf;
+    KBIB->PTail = KBIB->buf;
+    KBIB->count = 0;
+    memset(KBIB->buf, 0, KB_BUF_SIZE);
+    return 1;
+}
 
-        if (i < PB_CODE_SIZE)
-            ColorPrintfk(RED, BLACK, "There Is A Unkown KeyCode\n");
-        else
-        {
-            ColorPrintfk(BLUE, BLACK, "PauseBreak Key Has Been Pushed\n");
-            key = PAUSE_BREAK;
-        }
-    }
-
-    if (x == 0xe0)
-    {
-        x = GetScanCode();
-        make = (x & FLAG_BREAK ? 0 : 1);
-        switch (x & 0x7f)
-        {
-        case 0x2a:
-        {
-            if (GetScanCode() == 0xe0)
-                if (GetScanCode() == 0x37)
-                {
-                    key = PRINT_SCREEN;
-                    make = 0;
-                }
+int keyboard_ioctl(index_node *inode, file *filp, unsigned long cmd, unsigned long arg){
+    switch (cmd){
+        case KEY_CMD_RESET_BUFFER:
+            KBIB->PHead  = KBIB->buf;
+            KBIB->PTail  = KBIB->buf;
+            KBIB->count = 0;
+            memset(KBIB->buf, 0, KB_BUF_SIZE);
             break;
-        }
-        case 0x1D:
-        {
-            CtrlL = make;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x38:
-        {
-            AltR = make;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x48:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x4b:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x50:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x4d:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x52:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x47:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x49:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x53:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x4f:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x51:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x5b:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x5c:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x5d:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x35:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-        case 0x1c:
-        {
-            CtrlL = 1;
-            key = OTHER_KEY;
-            break;
-        }
-
+        
         default:
             break;
-        }
     }
 
-    if (key == 0)
-    {
-        unsigned char *KeyRow = NULL;
-        int column = 0;
-        make = (x & FLAG_BREAK ? 0 : 1);
-        KeyRow = &KeyCodeMapNormal[(x & 0x7f) * MAP_COLS];
-        if (ShiftL | ShiftR)
-            column = 1;
+    return 0;
+}
+int keyboard_lseek(file *filp, long offset, long origin){}
 
-        key = KeyRow[column];
+int keyboard_read(file *filp, char *buf, unsigned long count, long *position){
+    unsigned char *tail = NULL;
+    unsigned long counter;
 
-        switch (x & 0x7f)
-        {
-        case 0x2a:
-        {
-            ShiftL = make;
-            key = 0;
-            break;
-        }
-        case 0x1d:
-        {
-            CtrlL = make;
-            key = 0;
-            break;
-        }
-        case 0x38:
-        {
-            AltL = make;
-            key = 0;
-            break;
-        }
-        case 0x36:
-        {
-            ShiftR = make;
-            key = 0;
-            break;
-        }
-        case 0x3a:
-        {
-            Caps ^= 1;
-            key = 0;
-            break;
-        }
+    if(KBIB->count == 0) sleep_on(&keyboard_wait_queue);
 
-        default:
-        {
-            if (!make)
-                key = 0;
-            break;
-        }
-        }
-
-        if (key)
-            ColorPrintfk(BLUE, BLACK, "%c", key);
+    counter = count < KBIB->count ? count : KBIB->count;
+    tail = KBIB->PTail;
+    if(counter <= (KBIB->buf - KBIB->PTail + KB_BUF_SIZE)){
+        copy_to_user(tail, buf, counter);
+        KBIB->PTail += counter;
+    }else{
+        copy_to_user(tail, buf, (KBIB->buf - tail + KB_BUF_SIZE));
+        copy_to_user(KBIB->PHead, buf, counter - (KBIB->buf - tail + KB_BUF_SIZE));
+        KBIB->PTail = KBIB->PHead + counter - (KBIB->buf - tail + KB_BUF_SIZE);
     }
+    KBIB->count -= counter;
+    return counter;
+
+}
+int keyboard_write(file *filp, char *buf, unsigned long count, long *position){
+    return 0;
 }
 
 void KeyboardHandler(struct PtRegs *regs, unsigned long nr, unsigned long arg)
@@ -507,6 +348,8 @@ void KeyboardHandler(struct PtRegs *regs, unsigned long nr, unsigned long arg)
     *(KBIB->PHead) = x;
     KBIB->count++;
     KBIB->PHead++;
+    wake_up(&keyboard_wait_queue, TASK_UNINTERRUPTABLE);
+    
 }
 
 void KeyboardExit()
@@ -515,11 +358,21 @@ void KeyboardExit()
     kfree(KBIB);
 }
 
+file_operations keyboard_operation = {
+    .close  = keyboard_close,
+    .open   = keyboard_open,
+    .ioctl  = keyboard_ioctl,
+    .lseek  = keyboard_lseek,
+    .read   = keyboard_read,
+    .write  = keyboard_write,
+};
+
 void KeyboardInit()
 {
     IoApicRetEntry entry;
     BuildController(&KBController);
 
+    wait_queue_init(&keyboard_wait_queue, NULL);
     KBIB = (KeyboardInBuf *)kmalloc(sizeof(KeyboardInBuf), 0);
     KBIB->PHead = KBIB->buf;
     KBIB->PTail = KBIB->buf;
