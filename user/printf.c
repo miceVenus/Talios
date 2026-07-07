@@ -2,23 +2,9 @@
 
 #include "stdlib.h"
 
+#include "string.h"
+
 #define MAX_BUFFER_LEN 1024
-
-
-void StringCopy(char *Src, char *Dst){
-    char *Ptr = Src;
-    while(*Ptr != '\0') *(Dst++) = *(Ptr++);
-    *Dst = '\0';
-}
-
-/*
-
-*/
-int StringLen(char *Str){
-    char *Ptr = Str;
-    while(*Ptr != '\0') Ptr++;
-    return Ptr - Str;
-}
 
 int printf(const char * restrict format, ...){
 
@@ -135,7 +121,7 @@ int vsprintf(char * restrict s, const char * restrict format, va_list ap){
                     break;
                 }
 
-                StringCopy(TempBuffer, s + BufferIndex);
+                strcpy(TempBuffer, s + BufferIndex);
                 BufferIndex += IndexIncre;
                 break;
 
@@ -150,20 +136,20 @@ int vsprintf(char * restrict s, const char * restrict format, va_list ap){
                     break;
                 }
 
-                StringCopy(TempBuffer, s + BufferIndex);
+                strcpy(TempBuffer, s + BufferIndex);
                 BufferIndex += IndexIncre;
                 break;
 
             case 's':
                 ArgString = va_arg(ap, char*);
-                IndexIncre = StringLen(ArgString);
+                IndexIncre = strlen(ArgString);
 
                 if(IndexIncre + BufferIndex >= MAX_BUFFER_LEN){
                     CurrentChar = 0;
                     break;
                 }
 
-                StringCopy(ArgString, s + BufferIndex);
+                strcpy(ArgString, s + BufferIndex);
                 BufferIndex += IndexIncre;
                 break;
 
@@ -181,7 +167,7 @@ int vsprintf(char * restrict s, const char * restrict format, va_list ap){
                     break;
                 }
 
-                StringCopy(TempBuffer, s + BufferIndex);
+                strcpy(TempBuffer, s + BufferIndex);
                 BufferIndex += IndexIncre;
                 break;
 

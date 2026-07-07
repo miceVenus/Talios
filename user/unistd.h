@@ -22,6 +22,10 @@ int vfork();
 
 int execve(char *path);
 
+int chdir(const char *path);
+
+int fchdir(int fd);
+
 
 
 #endif

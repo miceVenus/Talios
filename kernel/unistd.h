@@ -12,7 +12,10 @@
 #define __NR_execve     9
 #define __NR_brk        10
 #define __NR_ioctl      11
-
+#define __NR_reboot     12
+#define __NR_chdir      13
+#define __NR_fchdir     14
+#define __NR_getdents   15
 
 
 #endif

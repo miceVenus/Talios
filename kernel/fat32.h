@@ -24,7 +24,7 @@ typedef struct FAT32_FSInfo{
 }__attribute__((packed))FAT32_FSInfo;
 
 typedef struct FAT32_Directory{
-    unsigned char dir_name[11];
+    unsigned char dir_name[11];         // dirname[0] == 0xe5 deleted entry, skip; 0x00 no more entries, stop scanning; 0x05 actual first character is 0xE5
     unsigned char dir_attr;
     unsigned char dir_ntres;            // NT reserved filed
     unsigned char dir_crt_time_tenth;   // create time high precision extension
@@ -115,6 +115,7 @@ int fat32_write(file * filp, char * buf, unsigned long count, long * position);
 int fat32_close(index_node * inode, file * filp);
 int fat32_lseek(file * filp, long offset, long origin);
 int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
+int fat32_readdir(file * filp, char *buf, filldir_t filler);
 
 // super block op
 void fat32_write_superblock(super_block * lsb);

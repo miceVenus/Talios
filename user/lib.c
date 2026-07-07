@@ -22,6 +22,11 @@ SYSFUNC_DEF(fork)
 SYSFUNC_DEF(vfork)
 SYSFUNC_DEF(execve)
 SYSFUNC_DEF(brk)
+SYSFUNC_DEF(reboot)
+SYSFUNC_DEF(chdir)
+SYSFUNC_DEF(fchdir)
+SYSFUNC_DEF(getdents)
+
 
 long errno;
 

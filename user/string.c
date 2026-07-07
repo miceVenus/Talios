@@ -14,6 +14,11 @@ char *strrvs(char *Str){
     return Str;
 }
 
+
+void strncat(char *t_str, char *s_str, unsigned long n){
+    strncpy(s_str, t_str + strlen(t_str), n);
+}
+
 void strcpy(char *Src, char *Dst){
     char *Ptr = Src;
     while(*Ptr != '\0') *(Dst++) = *(Ptr++);

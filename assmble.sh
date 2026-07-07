@@ -5,11 +5,11 @@ sudo mount bin/boot.img /mnt -t vfat -o loop && \
 echo "\n==== LOAD LOADER AND KERNEL ====\n" && \
 sudo cp bin/loader.bin /mnt/loader.bin && \
 sudo cp bin/kernel.bin /mnt/kernel.bin && \
-sudo cp bin/init.bin /mnt/init.bin && \
 sudo sync && \
 sudo umount /mnt && \
 sudo mount bin/fat32disk.img /mnt -t vfat -o loop && \
 sudo cp bin/init.bin /mnt/init.bin && \
+sudo touch /mnt/KEYBOARD.DEV &&\
 sudo sync && \
 sudo umount /mnt && \
 echo "\n==== FILE SYSTEM CHECK ====\n" && \

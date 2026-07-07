@@ -44,6 +44,9 @@ dir_entry* path_walk(char *path, unsigned long flags){
         while(*start == '/') start++;
         end = start;
         while(*end != '/' && *end != '\0') end++;
+
+        if(end == start) return parent;
+        
         memcopy(start, name, (end - start));
         name[end - start] = '\0';
         c_dir = (dir_entry*)kmalloc(sizeof(dir_entry), 0);

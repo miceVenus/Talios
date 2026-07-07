@@ -15,10 +15,6 @@ int sprintf(char * restrict s, const char * restrict format, ...);
 
 int vsprintf(char * restrict s, const char * restrict format, va_list ap);
 
-void *malloc(unsigned long size);
-
-void free(void *addr);
-
 unsigned char AnalyzeKeyCode(int fd);
 
 #endif

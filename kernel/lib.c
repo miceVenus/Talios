@@ -184,8 +184,9 @@ long copy_to_user(void * from, void * to, unsigned long size){
 }
 
 long strncpy_from_user(char * src, char * dst, unsigned long size){
-    src[size] = '\0';
-    return copy_from_user((void *)src, (void *)dst, size);
+    long ret = copy_from_user((void *)src, (void *)dst, size);
+    dst[size] = '\0';
+    return ret;
 }
 
 long strnlen_user(char *src, unsigned long size){

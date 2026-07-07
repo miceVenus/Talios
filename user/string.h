@@ -15,4 +15,6 @@ int strlen(char *Str);
 
 int strcmp(char *str1, char *str2);
 
+void strncat(char *t_str, char *s_str, unsigned long n);
+
 #endif

@@ -25,6 +25,8 @@ typedef struct index_node_operations index_node_operations;
 typedef struct dir_entry_operations dir_entry_operations;
 typedef struct file_system_type file_system_type;
 
+typedef int (*filldir_t)(void * buf, char * name, long namelen, long type, long offset);
+
 
 typedef struct file_system_type{
     char * name;
@@ -105,6 +107,7 @@ typedef struct dir_entry_operations{
 typedef struct file_operations{
     int (*open)(index_node * inode, file * filp);
     int (*read)(file * filp, char * buf, unsigned long count, long * position);
+    int (*readdir)(file * filp, char * buf, filldir_t filler);
     int (*write)(file * filp, char * buf, unsigned long count, long * position);
     int (*close)(index_node * inode, file * filp);
     int (*lseek)(file * filp, long offset, long origin);

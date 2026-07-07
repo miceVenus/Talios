@@ -1,6 +1,7 @@
 #ifndef STDLIB_H
 #define STDLIB_H
 
+#define NULL 0
 
 #define DoDiv(num, base) ({\
         int __res; \
@@ -18,5 +19,9 @@
 void memset(void *Src, char num, unsigned long n);
 
 void memcopy(void *Src, void *Dst, unsigned long n);
+
+void *malloc(unsigned long size);
+
+void free(void *addr);
 
 #endif

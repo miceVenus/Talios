@@ -9,6 +9,9 @@
 #include "sched.h"
 #include "task.h"
 #include "fat32.h"
+#include "dirent.h"
+#include "sys.h"
+
 
 extern file_operations keyboard_operation;
 
@@ -53,7 +56,11 @@ unsigned long sys_open(char * filename, int flag){
     }
 
     ColorPrintfk(BLUE, BLACK, "entry name : %s, entry size : %d\n", dentry->name, dentry->dir_node->file_size);
-    if(dentry->dir_node->attribute == FS_ATTR_DIR) return -EISDIR;
+    
+    if(!(flag & O_DIRECTORY) && (dentry->dir_node->attribute == FS_ATTR_DIR)) return -EISDIR;
+
+    if((flag & O_DIRECTORY) && (dentry->dir_node->attribute != FS_ATTR_DIR)) return -ENOTDIR;
+
 
     file * filp = (file *) kmalloc(sizeof(file), 0);
     memset(filp, 0, sizeof(file));
@@ -82,6 +89,10 @@ unsigned long sys_open(char * filename, int flag){
     if(filp->mode & O_APPEND){
         filp->position = filp->dentry->dir_node->file_size;
     }
+
+    // if(filp->mode & O_DIRECTORY){
+    //     filp->f_ops = filp->dentry->dir_ops;
+    // }
 
     f = CURRENT->handle_array;
 
@@ -186,8 +197,6 @@ unsigned long sys_lseek(int fd, long offset, int whence){
         return -EINVAL;
     }
 
-    ColorPrintfk(GREEN, BLACK, "here is lseek\n");
-
     file * filp = CURRENT->handle_array[fd];
 
     if(filp->f_ops && filp->f_ops->close){
@@ -244,3 +253,96 @@ unsigned long sys_brk(unsigned long brk){
 
     return new_brk;
 }
+
+unsigned long sys_reboot(unsigned long cmd, void *arg){
+
+    switch (cmd){
+        case SYSTEM_REBOOT:
+            OUT8b(0x64, 0xfe);
+            break;
+        case SYSTEM_POWEROFF:
+            ColorPrintfk(BLUE, BLACK, "what are you expecting");
+            break;
+        default:
+            ColorPrintfk(RED, BLACK, "no this cmd %d", cmd);
+            break;
+    }
+
+    return 0;
+
+}
+
+unsigned long sys_chdir(const char *filename){
+
+    char *path = NULL;
+    long pathlen = 0;
+    dir_entry * dentry = NULL;
+
+    path = (char *)kmalloc(PAGE_4K_SIZE, 0);
+    if(!path) return -ENOMEM;
+
+    memset(path, 0, PAGE_4K_SIZE);
+
+    pathlen = strnlen_user(filename, PAGE_4K_SIZE);
+
+    if(pathlen <= 0){
+        kfree(path);
+        return -EFAULT;
+    }
+
+    if(pathlen == PAGE_4K_SIZE){
+        kfree(path);
+        return -ENAMETOOLONG;
+    }
+
+    strncpy_from_user(filename, path, pathlen);
+
+    dentry = path_walk(path, 0);
+    kfree(path);
+
+    if(!dentry) return -ENOENT;
+
+    if(dentry->dir_node->attribute != FS_ATTR_DIR)
+        return -ENOTDIR;
+
+    return 0;
+
+}
+
+unsigned long sys_fchdir(unsigned int fd){
+    
+    return 0;
+
+}
+
+int fill_dentry(void * buf, char * name, long namelen, long type, long offset){
+    dirent * entry = (dirent *)buf;
+    if((unsigned long)buf < TASK_SIZE && !verify_area(buf, sizeof(dirent) + namelen))
+        return -EFAULT;
+
+    memcopy(name, entry->d_name, namelen);
+    entry->d_namelen = namelen;
+    entry->d_offset = offset;
+    entry->d_type = type;
+
+    return sizeof(dirent) + namelen;
+}
+
+
+unsigned long sys_getdents(int fd, void * dirent, long count){
+    long ret;
+    if(fd < 0 || fd >= MAX_HANDLE_PER_TASK){
+        return -EBADF;
+    }
+
+    if(count < 0 ){
+        return -EINVAL;
+    }
+
+    file * filp = CURRENT->handle_array[fd];
+
+    if(filp->f_ops && filp->f_ops->close) 
+        ret = filp->f_ops->readdir(filp, dirent, fill_dentry);
+    return ret;
+}
+
