@@ -3,6 +3,8 @@
 #include "lib.h"
 #include "task.h"
 #include "errno.h"
+#include "vma.h"
+#include "mmap.h"
 
 void ListInit(struct List *list);
 
@@ -13,6 +15,9 @@ int ListDelete(struct List *list);
 struct List* ListNext(struct List *list);
 
 int ListIsEmpty(struct List* list);
+struct List* list_search(const struct List *head, const struct List *tar);
+
+
 
 struct GlobalMemManager MMS;
 
@@ -25,6 +30,9 @@ extern char _erodata;
 unsigned long ZoneDmaIndex;
 unsigned long ZoneNormalIndex;
 unsigned long ZoneUnmapedIndex;
+
+static void reserve_phys_range(unsigned long start, unsigned long end,
+                               unsigned long attr);
 
 struct SlabCache KmallocSlabSet[KMALLOC_SLAB_SIZE] = {
   {0x20, 0, 0, NULL, NULL, NULL, NULL},
@@ -105,7 +113,6 @@ int DeleteSlabCache(struct SlabCache *SC){
     while(!ListIsEmpty(&slab->list)){
         ListDelete(&slab->list);
         kfree(slab->ColorMap);
-        CleanPage(slab->page);
         FreePage(slab->page, 1);
         tmp_slab = slab;
         slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
@@ -113,7 +120,6 @@ int DeleteSlabCache(struct SlabCache *SC){
     }
     ListDelete(&slab->list);
     kfree(slab->ColorMap);
-    CleanPage(slab->page);
     FreePage(slab->page, 1);
     kfree(slab);
     kfree(SC);
@@ -187,7 +193,6 @@ int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
                 SC->TotalFree -= slab->ColorCount;
                 ListDelete(&slab->list);
                 kfree(slab->ColorMap);
-                CleanPage(slab->page);
                 FreePage(slab->page, 1);
                 kfree(slab);
             }
@@ -225,13 +230,10 @@ unsigned long SlabCacheInit(){
     // ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
     //                 MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
 
-    for(unsigned long i = PAGE_2M_INDEX(TempAddr); i < PAGE_2M_INDEX(VIRT_TO_PHY(MMS.EndStruct)); i++){
-        struct Page* TmpPage = (struct Page*)(MMS.PagesGroup + i);
-        TmpPage->ZoneStruct->PageFreeCount--;
-        TmpPage->ZoneStruct->PageUsingCount++;
-        MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
-        InitPage(TmpPage, PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) | PATTR(PG_PTABLE_MAPPED));
-    }
+    /* TempAddr is already a physical address. */
+    reserve_phys_range(TempAddr, VIRT_TO_PHY(MMS.EndStruct),
+                       PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) |
+                       PATTR(PG_PTABLE_MAPPED));
 
     // ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
     //                 MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
@@ -239,11 +241,10 @@ unsigned long SlabCacheInit(){
     for(int i = 0; i < KMALLOC_SLAB_SIZE; i++){
         unsigned long virtual   = PAGE_2M_ALIGN_UP(MMS.EndStruct + PAGE_2M_SIZE * i);
         unsigned long Physical  = VIRT_TO_PHY(virtual);
-        struct Page *page = (struct Page*)(MMS.PagesGroup + PAGE_2M_INDEX(Physical));
-        MMS.BitsMap[BITS_MAP_INDEX(page->PhyAddr)] |= BITS_MAP_BIT_PATTERN(page->PhyAddr);
-        InitPage(page, PATTR(PG_PTABLE_MAPPED) | PATTR(PG_KERNEL_INIT)| PATTR(PG_KERNEL));
-        page->ZoneStruct->PageUsingCount++;
-        page->ZoneStruct->PageFreeCount--;
+        struct Page *page = (struct Page*)(MMS.PagesGroup + PAGE_4K_INDEX(Physical));
+        reserve_phys_range(Physical, Physical + PAGE_2M_SIZE,
+                           PATTR(PG_PTABLE_MAPPED) | PATTR(PG_KERNEL_INIT) |
+                           PATTR(PG_KERNEL));
         KmallocSlabSet[i].CachePool->page = page;
         KmallocSlabSet[i].CachePool->Vaddress = (void *)virtual;
     }
@@ -253,116 +254,209 @@ unsigned long SlabCacheInit(){
     
     return 1;
 }
-/// @brief ugly but useful
-/// @param ZoneSelector An Enum Type Defined In memory.h To Control The Type Of Memory
-/// @param number   0 < Number < 64
-/// @param PageAttr An Enum Type Defined In memory.h To Describe Page 
-/// @return Alloced Memory Start
-struct Page* AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
-    
-    if(number <= 0 || number > 64) return NULL;
 
-    struct Zone *z;
-    struct Page *p;
-    unsigned long value;
-    unsigned long ZoneStart, ZoneEnd;
-    unsigned long pattern = number == 64 ? 0xffffffffffffffff : ~((1UL << (BITS_PER_LONG - number)) - 1);
-    unsigned long PatternBak = pattern;
-    unsigned long DefaultAttr;
-    unsigned long i, j, k, l, tmp;
+static void reserve_phys_range(unsigned long start, unsigned long end,
+                               unsigned long attr){
+    unsigned long first = PAGE_4K_INDEX(PAGE_4K_ALIGN_DOWN(start));
+    unsigned long last  = PAGE_4K_INDEX(PAGE_4K_ALIGN_UP(end));
 
-    switch (ZoneSelector){
-        case ZONE_DMA_INDEX:
-            ZoneStart   = 0;
-            ZoneEnd     = ZoneDmaIndex; 
-            DefaultAttr = PATTR(PG_PTABLE_MAPPED); 
-            goto LABEL_HANDLE;
-
-        case ZONE_NORMAL_INDEX:
-            ZoneStart   = ZoneDmaIndex;
-            ZoneEnd     = ZoneNormalIndex;
-            DefaultAttr = PATTR(PG_PTABLE_MAPPED);
-            goto LABEL_HANDLE;
-
-        case ZONE_UNMAPED_INDEX:
-            ZoneStart   = ZoneUnmapedIndex;
-            ZoneEnd     = MMS.ZonesCount - 1;
-            DefaultAttr = 0;
-            goto LABEL_HANDLE;
-        
-        default:
-            ColorPrintfk(YELLOW, BLACK, "Unknown ZoneSelector\n");
-            return NULL;
-
-    LABEL_HANDLE:
-        // apparentlly Bug exist
-        for(i = ZoneStart; i <= ZoneEnd; i++){
-            z = MMS.ZonesGroup + i;
-
-            if(z -> PageFreeCount < (unsigned)number){
-                ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Index %D Which Type Is %d\n", i, ZoneSelector);
-                continue;
-            }
-
-            tmp = BITS_PER_LONG - BITS_MAP_BIT_OFFSET(z -> ZoneStartAddr);
-
-            for(j = PAGE_2M_INDEX(z->ZoneStartAddr); j < PAGE_2M_INDEX(z->ZoneEndAddr); j += j % BITS_PER_LONG ? BITS_PER_LONG : tmp){
-
-                // ColorPrintfk(YELLOW, BLACK, "%d, %p, %p\n", j, p -> PhyAddr, p);
-                p = MMS.PagesGroup + j;
-                unsigned long index = BITS_MAP_INDEX(p -> PhyAddr);
-                value = MMS.BitsMap[index];
-
-                // HERE To Handle The UnAligned
-                if(index < (MMS.BitsMapLength >> 3)){
-                    value <<= BITS_PER_LONG - tmp;
-                    value +=  (MMS.BitsMap[index + 1] & (~((1UL << tmp) - 1))) >> tmp;
-                }
-
-                for(k = 0; k <= BITS_PER_LONG - number; k++){
-                    if(!(value & pattern)){
-                        for(l = 0; l < (unsigned)number; l++){
-                            struct Page *TmpPage = (p + k + l);
-                            MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
-                            TmpPage->ZoneStruct->PageFreeCount--;
-                            TmpPage->ZoneStruct->PageUsingCount++;;
-                            InitPage(TmpPage, PageAttr | DefaultAttr);
-                        }
-                        return p + k;
-                    }
-                    pattern >>= 1;
-                }
-
-                pattern = PatternBak;
+    if(last > MMS.PagesCount) last = MMS.PagesCount;
+    for(unsigned long pfn = first; pfn < last; pfn++){
+        struct Page *page = MMS.PagesGroup + pfn;
+        if(page->ZoneStruct != NULL && !page->reserved){
+            page->reserved = 1;
+            page->ZoneStruct->PageFreeCount--;
+            page->ZoneStruct->PageUsingCount++;
+            page->Attribute |= attr;
+            if(page->RefCount == 0){
+                page->RefCount = 1;
+                page->ZoneStruct->TotalPagesLink++;
             }
         }
     }
-    ColorPrintfk(YELLOW, BLACK, "Can't Alloc Mem In Zone Type Is %d May Be There Is No More Space \n", ZoneSelector);
+}
+
+
+struct Page *__alloc_pages_slowpath(){
+    ColorPrintfk(RED, BLACK, "slow path is not implemented");
+    return NULL;
+}
+struct Page *get_page_from_freelist(struct Zone *zone, unsigned int order, int alloc_flags){
+
+        for(int i = order; i < MAX_ORDER; i++){
+            if(zone->free_area[i].nr_free == 0) continue;
+
+            // split buddy
+            if(i != order){
+                int ob = i;
+                while(ob > order){
+                    struct List * bigger_block = zone->free_area[ob].free_list.next;
+                    struct Page * block_head = ContainerOf(bigger_block, struct Page, buddy_list);
+                    
+                    ListDelete(zone->free_area[ob].free_list.next);
+                    zone->free_area[ob].nr_free--;
+                    
+                    ListBackAdd(&zone->free_area[ob - 1].free_list, &(block_head + (1 << (ob - 1)))->buddy_list);
+                    ListBackAdd(&zone->free_area[ob - 1].free_list, &block_head->buddy_list);
+
+                    zone->free_area[ob - 1].nr_free += 2;
+
+                    ob--;
+                }
+            }
+            struct Page * page =  ContainerOf(zone->free_area[order].free_list.next, struct Page, buddy_list);
+
+            ListDelete(&page->buddy_list);
+            zone->free_area[order].nr_free--;
+
+            if(page->ZoneStruct){
+                page->ZoneStruct->PageFreeCount  -= (1 << order);
+                page->ZoneStruct->PageUsingCount += (1 << order);
+                page->ZoneStruct->TotalPagesLink += (1 << order);
+
+                for(int j = 0; j < (1 << order); j++){
+                    (page + j)->RefCount++;
+                    (page + j)->Attribute |= alloc_flags;
+                }
+                return page;
+
+            }
+        }
+
+        return NULL;
+}
+ 
+struct Page *__alloc_pages(struct Zone *zone, unsigned int order, int alloc_flags){
+
+    struct Page *page = get_page_from_freelist(zone, order, alloc_flags);
+
+    if(!page) page = __alloc_pages_slowpath();
+
+    return page;
+}
+
+void __free_pages_core(struct Page *page, int order){
+
+    // this page should be aligned with (1 << order) block_head
+    struct Zone *zone = page->ZoneStruct;
+    unsigned long page_index = PAGE_4K_INDEX(page->PhyAddr);
+
+    while(order < MAX_ORDER - 1){
+        unsigned long buddy_index = page_index ^ (1 << order);
+        if( buddy_index < PAGE_4K_INDEX(zone->ZoneStartAddr) ||
+            buddy_index >= PAGE_4K_INDEX(zone->ZoneEndAddr)){
+            break;
+        }
+
+        struct Page * buddy_head = MMS.PagesGroup + buddy_index;
+        if(!list_search(&zone->free_area[order].free_list, &buddy_head->buddy_list)){
+            break;
+        }
+        ListDelete(&buddy_head->buddy_list);
+        zone->free_area[order].nr_free--;
+
+        if(buddy_index < page_index) page_index = buddy_index;
+        order++;
+    }
+
+    // this is a safe access
+    ListBackAdd(&zone->free_area[order].free_list, &(MMS.PagesGroup + page_index)->buddy_list);
+
+    zone->free_area[order].nr_free++;
+}
+
+void __free_pages(struct Page *page, int order){
+
+    struct Zone *zone = page->ZoneStruct;
+
+    __free_pages_core(page, order);
+
+    zone->PageFreeCount  += (1 << order);
+    zone->PageUsingCount -= (1 << order);
+    zone->TotalPagesLink -= (1 << order);
+
+    for(int j = 0; j < (1 << order); j++){
+        (page + j)->RefCount--;
+        (page + j)->Attribute = 0;
+    }
+}
+
+unsigned long is_this_zone(unsigned long zone_index, int zone_selector){
+    switch(zone_selector){
+        // lower 16MiB
+        case ZONE_DMA_INDEX:
+            return zone_index == ZoneDmaIndex;
+
+        // lower 4GiB
+        case ZONE_NORMAL_INDEX:
+            return zone_index == ZoneNormalIndex;
+
+        // upper 4GiB
+        case ZONE_UNMAPED_INDEX:
+            return zone_index == ZoneUnmapedIndex;
+    }
+
+    return 0;
+}
+
+static unsigned int get_order(unsigned int number){
+    unsigned int order = 0;
+
+    while(order < MAX_ORDER){
+        if(number <= (1 << order)) break;
+        order++;
+    }
+
+    return order;
+}
+
+struct Page *alloc_pages(int zone_selector, unsigned int number, unsigned long PageAttr){
+    unsigned long attr = PageAttr;
+    if(zone_selector != ZONE_UNMAPED_INDEX) attr |= PATTR(PG_PTABLE_MAPPED);
+
+    unsigned int order = get_order(number);
+
+    if(order >= MAX_ORDER) return NULL;
+
+    for(int i = 0; i < MMS.ZonesCount; i++){
+        struct Zone * zone = MMS.ZonesGroup + i;
+        if(!is_this_zone(i, zone_selector)){
+            continue;
+        }
+
+        struct Page * page = __alloc_pages(zone, order, attr);
+
+        if(page) return page;
+    }
+
     return NULL;
 }
 
-int FreePage(struct Page* page, int number){
-    
-    if(number <= 0 || number > 64) return 0;
+int free_pages(struct Page *page, int number){
+    unsigned long order = get_order(number);
 
-    unsigned long index = PAGE_2M_INDEX(VIRT_TO_PHY(MMS.EndStruct));
-    if(page <= MMS.PagesGroup + index) {ColorPrintfk(RED, BLACK, "Can`t Free Fixed Page"); return 0;}
+    if(order >= MAX_ORDER) return 0;
 
-    if(page == NULL) {ColorPrintfk(RED, BLACK, "page == NULL In FreePage()\n"); return 0;}
+    __free_pages(page, order);
 
-    struct Page *tmp = page;
-    for(int i = 0; i < number; i++){
-        tmp = page + i;
-        MMS.BitsMap[BITS_MAP_INDEX(tmp->PhyAddr)] ^= BITS_MAP_BIT_PATTERN(tmp->PhyAddr);
-
-        tmp->ZoneStruct->PageFreeCount++;
-        tmp->ZoneStruct->PageUsingCount--;
-        tmp->Attribute = 0;
-    }
-
-    ColorPrintfk(   BLUE, BLACK, "MMS.BitsMap:%X, ZoneStruct->FreeCount:%X, ZoneStruct->UsingCount:%X \n", 
-                    MMS.BitsMap[0], MMS.ZonesGroup->PageFreeCount, MMS.ZonesGroup->PageUsingCount);
     return 1;
+}
+
+/* AllocPage keeps its historical meaning: number of contiguous 2 MiB blocks. */
+struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
+    return alloc_pages(ZoneSelector, number << 9, PageAttr);
+}
+
+struct Page *AllocPage4K(int ZoneSelector, int number, unsigned long PageAttr){
+    return alloc_pages(ZoneSelector, number, PageAttr);
+}
+
+int FreePage(struct Page *page, int number){
+    return free_pages(page, number << 9);
+}
+
+int FreePage4K(struct Page *page, int number){
+    return free_pages(page, number);
 }
 
 
@@ -480,14 +574,12 @@ unsigned int kfree(void *ptr){
                         SC->TotalUse -= slab->UsingCount;
                         SC->TotalFree -= slab->FreeCount;
                         ListDelete(&slab->list);
-                        CleanPage(slab->page);
                         FreePage(slab->page, 1);
                         break;
                     }
                     default:{
                         SC->TotalFree -= slab->FreeCount;
                         ListDelete(&slab->list);
-                        CleanPage(slab->page);
                         FreePage(slab->page, 1);
                         kfree(slab);
                         break;
@@ -502,41 +594,274 @@ unsigned int kfree(void *ptr){
     return 0;
 }
 
-unsigned long do_brk(unsigned long start, unsigned long size){
-
-    unsigned long * tmp     = NULL;
-    unsigned long * virtual = NULL;
-    struct Page *p          = NULL;
-    unsigned long i                   = 0;
-
-    for(i = start; i < start + size; i += PAGE_2M_SIZE){
-        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL))) + GetBits(i, PAGE_GDT_SHIFT, 9);
-        if(!(*tmp)){
-            virtual = kmalloc(PAGE_4K_SIZE, 0);
-            memset(virtual, 0, PAGE_4K_SIZE);
-            SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-        }
-
-        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL))) + GetBits(i, PAGE_1G_SHIFT, 9);
-        if(!(*tmp)){
-            virtual = kmalloc(PAGE_4K_SIZE, 0);
-            memset(virtual, 0, PAGE_4K_SIZE);
-            SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-        } 
-        tmp = (unsigned long *)(PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL))) + GetBits(i, PAGE_2M_SHIFT, 9);
-        if(!(*tmp)){
-            p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
-            if(p == NULL) return -ENOMEM;
-            SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
-        } 
-    }
-
-    CURRENT->lmm->EndBrk = i;
-    FlushTLB();
-    return i;
+static unsigned long *table_from_entry(unsigned long entry){
+    return PHY_TO_VIRT(entry & PAGE_4K_MASK);
 }
 
+static unsigned long *walk_pte(unsigned long pgd, unsigned long vaddr, int create){
+    unsigned long *entry;
+    unsigned long *table;
+    unsigned long *pml4 = PHY_TO_VIRT(pgd & PAGE_4K_MASK);
 
+    entry = pml4 + GetBits(vaddr, PAGE_GDT_SHIFT, 9);
+    if(!*entry && create){
+        void *page = kmalloc(PAGE_4K_SIZE, 0);
+        if(!page) return NULL;
+        memset(page, 0, PAGE_4K_SIZE);
+        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
+    }
+    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
+    table = table_from_entry(*entry);
+
+    entry = table + GetBits(vaddr, PAGE_1G_SHIFT, 9);
+    if(!*entry && create){
+        void *page = kmalloc(PAGE_4K_SIZE, 0);
+        if(!page) return NULL;
+        memset(page, 0, PAGE_4K_SIZE);
+        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
+    }
+    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
+    table = table_from_entry(*entry);
+
+    entry = table + GetBits(vaddr, PAGE_2M_SHIFT, 9);
+    if(!*entry && create){
+        void *page = kmalloc(PAGE_4K_SIZE, 0);
+        if(!page) return NULL;
+        memset(page, 0, PAGE_4K_SIZE);
+        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
+    }
+    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
+    table = table_from_entry(*entry);
+
+    return table + GetBits(vaddr, PAGE_4K_SHIFT, 9);
+}
+
+int MapPage4K(unsigned long pgd, unsigned long vaddr, struct Page *page,
+             unsigned long flags){
+    unsigned long *pte;
+
+    if(page == NULL || (vaddr & (PAGE_4K_SIZE - 1)) != 0 ||
+       (page->PhyAddr & (PAGE_4K_SIZE - 1)) != 0)
+        return -EINVAL;
+
+    pte = walk_pte(pgd, vaddr, 1);
+    if(pte == NULL || (*pte & PEA_PRESENT)) return -ENOMEM;
+
+    *pte = page->PhyAddr | (flags & ~PEA_PAGE_SIZE);
+    return 0;
+}
+
+static int page_fault_access_allowed(vm_area_struct *vma,
+                                     unsigned long error_code){
+    if(vma == NULL) return 0;
+
+    if(error_code & (1UL << 1)){
+        return (vma->prot & PROT_WRITE) != 0;
+    }
+
+    if(error_code & (1UL << 4)){
+        return (vma->prot & PROT_EXEC) != 0;
+    }
+
+    return (vma->prot & PROT_READ) != 0;
+}
+
+int handle_page_fault(struct LocalMemManager *mm,
+                      unsigned long address,
+                      unsigned long error_code){
+    vm_area_struct *vma;
+    struct Page *page;
+    unsigned long page_address;
+    unsigned long pte_flags;
+
+    /* Reserved-bit faults and faults on an already-present page are not
+     * demand-allocation faults.  COW will handle present write faults later. */
+    if(mm == NULL || mm->pgd == NULL ||
+       (error_code & (1UL << 3)) ||
+       (error_code & (1UL << 0)))
+        return -EFAULT;
+
+    page_address = PAGE_4K_ALIGN_DOWN(address);
+    vma = find_vma(mm, page_address);
+    if(vma == NULL || page_address < vma->start ||
+       page_address >= vma->end)
+        return -EFAULT;
+
+    if(!page_fault_access_allowed(vma, error_code))
+        return -EACCES;
+
+    /* This stage deliberately supports anonymous mappings only. */
+    if(!(vma->mmap_flags & MAP_ANONYMOUS) || vma->file != NULL)
+        return -EOPNOTSUPP;
+
+    page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
+                       PATTR(PG_PTABLE_MAPPED));
+    if(page == NULL)
+        return -ENOMEM;
+
+    memset(PHY_TO_VIRT(page->PhyAddr), 0, PAGE_4K_SIZE);
+
+    pte_flags = PEA_PRESENT | PEA_IS_USER;
+    if(vma->prot & PROT_WRITE)
+        pte_flags |= PEA_READ_WRITE;
+
+    if(MapPage4K((unsigned long)mm->pgd, page_address,
+                 page, pte_flags) != 0){
+        FreePage4K(page, 1);
+        return -ENOMEM;
+    }
+
+    FlushTLB();
+    return 0;
+}
+
+struct Page *UnmapPage4K(unsigned long pgd, unsigned long vaddr){
+    unsigned long *pte;
+    unsigned long physical;
+
+    if(vaddr & (PAGE_4K_SIZE - 1)) return NULL;
+    pte = walk_pte(pgd, vaddr, 0);
+    if(pte == NULL || !(*pte & PEA_PRESENT)) return NULL;
+
+    physical = *pte & PAGE_4K_MASK;
+    *pte = 0;
+    if((physical >> PAGE_4K_SHIFT) >= MMS.PagesCount) return NULL;
+    return MMS.PagesGroup + (physical >> PAGE_4K_SHIFT);
+}
+
+long MapUserRange4K(unsigned long pgd, unsigned long start, unsigned long size){
+    unsigned long first = PAGE_4K_ALIGN_DOWN(start);
+    unsigned long last = PAGE_4K_ALIGN_UP(start + size);
+    unsigned long vaddr;
+
+    for(vaddr = first; vaddr < last; vaddr += PAGE_4K_SIZE){
+        struct Page *page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
+                                        PATTR(PG_PTABLE_MAPPED));
+        if(page == NULL) goto fail;
+        memset(PHY_TO_VIRT(page->PhyAddr), 0, PAGE_4K_SIZE);
+        if(MapPage4K(pgd, vaddr, page, PEA_USER_PAGE) != 0){
+            FreePage4K(page, 1);
+            goto fail;
+        }
+    }
+    return 0;
+
+fail:
+    while(vaddr != first){
+        vaddr -= PAGE_4K_SIZE;
+        struct Page *page = UnmapPage4K(pgd, vaddr);
+        if(page != NULL) FreePage4K(page, 1);
+    }
+    return -ENOMEM;
+}
+
+void FreeUserPageTables(unsigned long pgd){
+    unsigned long *pml4 = PHY_TO_VIRT(pgd & PAGE_4K_MASK);
+
+    for(unsigned long pml4_index = 0; pml4_index < 256; pml4_index++){
+        unsigned long pml4e = pml4[pml4_index];
+        if(!pml4e || (pml4e & PEA_PAGE_SIZE)) continue;
+        unsigned long *pdpt = table_from_entry(pml4e);
+
+        for(unsigned long pdpt_index = 0; pdpt_index < 512; pdpt_index++){
+            unsigned long pdpte = pdpt[pdpt_index];
+            if(!pdpte || (pdpte & PEA_PAGE_SIZE)) continue;
+            unsigned long *pd = table_from_entry(pdpte);
+
+            for(unsigned long pd_index = 0; pd_index < 512; pd_index++){
+                unsigned long pde = pd[pd_index];
+                if(!pde) continue;
+                if(pde & PEA_PAGE_SIZE){
+                    struct Page *page = MMS.PagesGroup +
+                        ((pde & PAGE_2M_MASK) >> PAGE_4K_SHIFT);
+                    FreePage(page, 1);
+                    pd[pd_index] = 0;
+                    continue;
+                }
+
+                unsigned long *pt = table_from_entry(pde);
+                for(unsigned long pt_index = 0; pt_index < 512; pt_index++){
+                    if(pt[pt_index] & PEA_PRESENT){
+                        unsigned long physical = pt[pt_index] & PAGE_4K_MASK;
+                        if((physical >> PAGE_4K_SHIFT) < MMS.PagesCount)
+                            FreePage4K(MMS.PagesGroup +
+                                       (physical >> PAGE_4K_SHIFT), 1);
+                        pt[pt_index] = 0;
+                    }
+                }
+                kfree(pt);
+                pd[pd_index] = 0;
+            }
+            kfree(pd);
+            pdpt[pdpt_index] = 0;
+        }
+        kfree(pdpt);
+        pml4[pml4_index] = 0;
+    }
+}
+
+unsigned long do_brk(unsigned long start, unsigned long size){
+    unsigned long end = PAGE_4K_ALIGN_UP(start + size);
+
+    if(MapUserRange4K((unsigned long)CURRENT->lmm->pgd, start, size) != 0)
+        return (unsigned long)-ENOMEM;
+
+    CURRENT->lmm->EndBrk = end;
+    FlushTLB();
+    return end;
+}
+
+void init_buddy_system(){
+    
+    for(unsigned int i = 0; i < MMS.ZonesCount; i++){
+
+        struct Zone * z = MMS.ZonesGroup + i;
+
+        for(int j = 0; j < MAX_ORDER; j++){
+            z -> free_area[j].nr_free = 0;
+            ListInit(&z -> free_area[j].free_list);
+        }
+
+        int bp = 0;
+        while (bp < z->PagesCount){
+
+            if((z->PagesGroup + bp)->reserved){
+                bp++;
+                continue;
+            }
+            
+            unsigned long run_start = bp;
+
+            while(bp < z->PagesCount && !(z->PagesGroup + bp)->reserved) {
+                bp++;
+            }
+
+            unsigned long run_end = bp;
+
+            unsigned long cursor = run_start;
+
+            while(cursor < run_end){
+
+                int order   = MAX_ORDER - 1;
+                int remains = run_end - cursor;
+                unsigned long abs_page_index = PAGE_4K_INDEX(z -> ZoneStartAddr) + cursor;
+                
+                while(order > 0){
+                    unsigned long block_pages = 1UL << order;
+                    if((1 << order) <= remains && ((abs_page_index & (block_pages - 1)) == 0)){
+                        break;
+                    }
+                    order--;
+                }
+
+                __free_pages_core(z->PagesGroup + cursor, order);
+
+                cursor += (1 << (order));
+
+            }
+        }
+    }
+}
 void InitMemory(){
 
     MMS = (struct GlobalMemManager){
@@ -555,7 +880,6 @@ void InitMemory(){
         4. ACPI NVS memory, 5. Area containing bad memory)\n");
     struct E820 *p = (struct E820*)(MEM_STRUCT_ADDR);
 
-    unsigned int  Temp          = 0;
     unsigned long TotalMemory   = 0;
     unsigned long StartAddr     = 0;
     unsigned long EndAddr       = 0;
@@ -578,7 +902,7 @@ void InitMemory(){
 
     }
     ColorPrintfk(BLUE, BLACK, "Memory OS Could Use Is %D B Totally\n", TotalMemory);
-    unsigned long TotalPage2M = 0;
+    unsigned long TotalPage = 0;
 
     // Count Total Page
     for(unsigned int i = 0; i < MMS.GMDLength; i++){
@@ -587,12 +911,12 @@ void InitMemory(){
 
         struct E820 *CurrentMD  =  MMS.descriptor + i; 
 
-        StartAddr   = PAGE_2M_ALIGN_UP(CurrentMD->address);
-        EndAddr     = PAGE_2M_ALIGN_DOWN((CurrentMD->address + CurrentMD->length));
+        StartAddr   = PAGE_4K_ALIGN_UP(CurrentMD->address);
+        EndAddr     = PAGE_4K_ALIGN_DOWN((CurrentMD->address + CurrentMD->length));
         if(EndAddr  <= StartAddr) continue;
-        TotalPage2M += (EndAddr - StartAddr) >> PAGE_2M_SHIFT; 
+        TotalPage += (EndAddr - StartAddr) >> PAGE_4K_SHIFT;
     }
-    ColorPrintfk(BLUE, BLACK, "Page Num OS Have Is %D Totally\n", TotalPage2M);
+    ColorPrintfk(BLUE, BLACK, "Page Num OS Have Is %D Totally\n", TotalPage);
 
     // Include Memory Gap And ROM
     TotalMemory =  MMS.descriptor[MMS.GMDLength - 1].address + MMS.descriptor[MMS.GMDLength - 1].length;
@@ -600,17 +924,18 @@ void InitMemory(){
     // Init BitsMap
 
     MMS.BitsMap = (unsigned long *)MEM_GAP_ALIGN(MMS.StartBrk);
-    MMS.BitsMapCount = TotalMemory >> PAGE_2M_SHIFT;
+    MMS.BitsMapCount = TotalMemory >> PAGE_4K_SHIFT;
 
-    MMS.BitsMapLength = ((TotalMemory >> PAGE_2M_SHIFT) + 7) >> 3;
+    MMS.BitsMapLength = ((TotalMemory >> PAGE_4K_SHIFT) + 7) >> 3;
 
     memset(MMS.BitsMap, 0xff, MMS.BitsMapLength);
 
     // Init PageGroup
+    // our pages struct is stored in an continuous area
 
     MMS.PagesGroup  = (struct Page*)MEM_GAP_ALIGN(((unsigned long)MMS.BitsMap + MMS.BitsMapLength));
-    MMS.PagesCount   = TotalMemory >> PAGE_2M_SHIFT;
-    MMS.PagesLength = (TotalMemory >> PAGE_2M_SHIFT) * sizeof(struct Page);
+    MMS.PagesCount   = TotalMemory >> PAGE_4K_SHIFT;
+    MMS.PagesLength = (TotalMemory >> PAGE_4K_SHIFT) * sizeof(struct Page);
     memset(MMS.PagesGroup, 0x00, MMS.PagesLength);
 
     // Init ZoneGroup
@@ -624,8 +949,8 @@ void InitMemory(){
         if(MMS.descriptor[i].type != 1)
         continue;
 
-        StartAddr   = PAGE_2M_ALIGN_UP(MMS.descriptor[i].address);
-        EndAddr     = PAGE_2M_ALIGN_DOWN(MMS.descriptor[i].address + MMS.descriptor[i].length);
+        StartAddr   = PAGE_4K_ALIGN_UP(MMS.descriptor[i].address);
+        EndAddr     = PAGE_4K_ALIGN_DOWN(MMS.descriptor[i].address + MMS.descriptor[i].length);
 
         if(StartAddr >= EndAddr)
         continue;
@@ -637,8 +962,8 @@ void InitMemory(){
 
         z -> Attribute     = 0;
 
-        z -> PagesGroup    = MMS.PagesGroup + (StartAddr >> PAGE_2M_SHIFT);
-        z -> PageFreeCount = (EndAddr - StartAddr) >> PAGE_2M_SHIFT;
+        z -> PagesGroup    = MMS.PagesGroup + (StartAddr >> PAGE_4K_SHIFT);
+        z -> PageFreeCount = (EndAddr - StartAddr) >> PAGE_4K_SHIFT;
         z -> PagesCount    = z -> PageFreeCount;
         z -> PageUsingCount= 0;
         z -> TotalPagesLink= 0;
@@ -649,9 +974,9 @@ void InitMemory(){
 
         MMS.ZonesCount++;
 
-        for(unsigned long CurrentAddr = StartAddr; CurrentAddr < EndAddr; CurrentAddr += PAGE_2M_SIZE){
-            struct Page * p = MMS.PagesGroup + (CurrentAddr >> PAGE_2M_SHIFT);
-            MMS.BitsMap[BITS_MAP_INDEX(CurrentAddr)] ^= BITS_MAP_BIT_PATTERN(CurrentAddr);
+        for(unsigned long CurrentAddr = StartAddr; CurrentAddr < EndAddr; CurrentAddr += PAGE_4K_SIZE){
+            struct Page * p = MMS.PagesGroup + (CurrentAddr >> PAGE_4K_SHIFT);
+            MMS.BitsMap[BITS_MAP_4KB_INDEX(CurrentAddr)] ^= BITS_MAP_4KB_BIT_PATTERN(CurrentAddr);
 
             // Init PagesGroup
             p -> age           = 0;
@@ -659,6 +984,8 @@ void InitMemory(){
             p -> PhyAddr       = CurrentAddr;
             p -> RefCount      = 0;
             p -> ZoneStruct    = z;
+            p -> reserved      = 0;
+            ListInit(&p->buddy_list);
         }
     }
     // !!!!!!!!!!!!!!!!!!!!!
@@ -676,8 +1003,9 @@ void InitMemory(){
     
     // Marked Zone Which Is the Unmapped
 
+    // curiosity
     ZoneDmaIndex    = 0;
-    ZoneNormalIndex = 0;
+    ZoneNormalIndex = 1;
     ZoneUnmapedIndex= 0;
 
     for(unsigned long i = 0; i < MMS.ZonesCount; i++){
@@ -692,15 +1020,14 @@ void InitMemory(){
 
     // Init Page Attribute Used In Kernel Init
 
-    Temp =  VIRT_TO_PHY(MMS.EndStruct) >> PAGE_2M_SHIFT;
+    reserve_phys_range(0, VIRT_TO_PHY(MMS.EndStruct),
+                       PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) |
+                       PATTR(PG_PTABLE_MAPPED));
 
-    for(unsigned int i = 0; i < Temp; i++){
-        struct Page *TmpPage = (struct Page*)(MMS.PagesGroup + i);
-        TmpPage->ZoneStruct->PageFreeCount--;
-        TmpPage->ZoneStruct->PageUsingCount++;
-        MMS.BitsMap[BITS_MAP_INDEX(TmpPage->PhyAddr)] |= BITS_MAP_BIT_PATTERN(TmpPage->PhyAddr);
-        InitPage(TmpPage, PATTR(PG_KERNEL) | PATTR(PG_KERNEL_INIT) | PATTR(PG_PTABLE_MAPPED));
-    }
+
+    SlabCacheInit();
+    
+    init_buddy_system();
 
     // Flush The Consistency Mapping 
 
@@ -715,34 +1042,42 @@ void InitMemory(){
 
 void InitPageTable(){
     unsigned long Cr3 = GetCr3();
-    unsigned long* tmp;
-    for(int i = 0; i < MMS.ZonesCount; i++){
-        if(ZoneUnmapedIndex == (ZoneUnmapedIndex & i)) break;
+    unsigned long *pml4 = PHY_TO_VIRT(Cr3 & PAGE_4K_MASK);
 
-        struct Zone* zone = MMS.ZonesGroup + i;
+    for(unsigned long zi = 0; zi < MMS.ZonesCount; zi++){
+        struct Zone *zone = MMS.ZonesGroup + zi;
+        /* Map the complete enclosing huge-page range.  A usable E820 range
+         * may start or end in the middle of a 2 MiB block, while the direct
+         * map is still needed for every allocatable 4 KiB page in it. */
+        unsigned long start = PAGE_2M_ALIGN_DOWN(zone->ZoneStartAddr);
+        unsigned long end = PAGE_2M_ALIGN_UP(zone->ZoneEndAddr);
 
-        for(unsigned long j = 0; j < zone->PagesCount; j++){
-            struct Page* page       = zone->PagesGroup + i;
-            tmp =   (unsigned long *)((unsigned long)PHY_TO_VIRT(Cr3 & (~0xfff))) + 
-                    GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_GDT_SHIFT, 9);
+        for(unsigned long physical = start; physical < end;
+            physical += PAGE_2M_SIZE){
+            unsigned long vaddr = PAGE_OFFSET + physical;
+            unsigned long *entry = pml4 + GetBits(vaddr, PAGE_GDT_SHIFT, 9);
 
-            if(*tmp == 0){
-                void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-                memset(virtual, 0, PAGE_4K_SIZE);
-                SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
+            if(!*entry){
+                void *page = kmalloc(PAGE_4K_SIZE, 0);
+                if(!page) continue;
+                memset(page, 0, PAGE_4K_SIZE);
+                *entry = VIRT_TO_PHY(page) | PEA_SUPERVISOR_TABLE;
             }
-            tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
-                    GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_1G_SHIFT, 9);
-            
-            if(*tmp == 0){
-                void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-                memset(virtual, 0, PAGE_4K_SIZE);
-                SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-            }
+            if(*entry & PEA_PAGE_SIZE) continue;
 
-            tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + 
-                    GetBits((unsigned long)PHY_TO_VIRT(page->PhyAddr), PAGE_2M_SHIFT, 9);
-            SetPDE(tmp, page->PhyAddr, PEA_USER_ENTRY);
+            unsigned long *pdpt = table_from_entry(*entry);
+            entry = pdpt + GetBits(vaddr, PAGE_1G_SHIFT, 9);
+            if(!*entry){
+                void *page = kmalloc(PAGE_4K_SIZE, 0);
+                if(!page) continue;
+                memset(page, 0, PAGE_4K_SIZE);
+                *entry = VIRT_TO_PHY(page) | PEA_SUPERVISOR_TABLE;
+            }
+            if(*entry & PEA_PAGE_SIZE) continue;
+
+            unsigned long *pd = table_from_entry(*entry);
+            entry = pd + GetBits(vaddr, PAGE_2M_SHIFT, 9);
+            *entry = physical | PEA_SUPERVISOR_ENTRY;
         }
     }
 

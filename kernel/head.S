@@ -180,7 +180,8 @@ __PML4E:
     .quad   0x102007
     .fill   255,     8,  0
     .quad   0x102007
-    .fill   255,     8,  0
+    .quad   0x104007
+    .fill   254,     8,  0
 
 .org    0x2000
 
@@ -193,38 +194,31 @@ __PDPTE:
 
 __PDE:
 
-    .quad   0x000087
-    .quad   0x200087
-    .quad   0x400087
-    .quad   0x600087
-    .quad   0x800087
-    .quad   0xa00087
-    .quad   0xc00087
-    .quad   0xe00087
-    .quad   0x1000087
-    .quad   0x1200087
-    .quad   0x1400087
-    .quad   0x1600087
-    .quad   0x1800087
-    .quad   0x1a00087
-    .quad   0x1c00087
-    .quad   0x1e00087
-    .quad   0x2000087
-    .quad   0x2200087
-    .quad   0x2400087
-    .quad   0x2600087
-    .quad   0x2800087
-    .quad   0x2a00087
-    .quad   0x2c00087
-    .quad   0x2e00087
-    .quad   0xe0000087 # 0x3000000 framebuffer start 0xe0000000
+    .set    __pde_index, 0
+    .rept   512
+    .quad   ((__pde_index << 21) | 0x87)
+    .set    __pde_index, __pde_index + 1
+    .endr
+
+.org    0x4000
+
+__FRAMEBUFFER_PDPTE:
+
+    .quad   0x105007
+    .fill   511,     8,  0
+
+.org    0x5000
+
+__FRAMEBUFFER_PDE:
+
+    .quad   0xe0000087
     .quad   0xe0200087
     .quad   0xe0400087
-    .quad   0xe0600087 # 0x3600000 
+    .quad   0xe0600087
+    .quad   0xe0800087
     .quad   0xe0a00087
     .quad   0xe0c00087
-    .quad   0xe0e00087
-    .fill   499,     8,  0
+    .fill   505,     8,  0
 
 
 

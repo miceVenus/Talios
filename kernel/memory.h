@@ -3,6 +3,7 @@
 
 #include "lib.h"
 
+#define MAX_ORDER       11
 #define MAX_GMD_LEN     32
 #define MEM_STRUCT_ADDR 0xffff800000007e00
 
@@ -32,7 +33,14 @@
 #define PHY_TO_VIRT(addr)   ((unsigned long *)((unsigned long)(addr) + PAGE_OFFSET))
 
 #define PAGE_2M_INDEX(Paddr)             ((Paddr) >> PAGE_2M_SHIFT)
-#define BITS_MAP_INDEX(Paddr)            (PAGE_2M_INDEX(Paddr) >> 6)
+#define PAGE_4K_INDEX(phy_addr)          ((phy_addr) >> PAGE_4K_SHIFT)
+
+#define BITS_MAP_4KB_INDEX(phy_addr)            (PAGE_4K_INDEX(phy_addr) / BITS_PER_LONG)
+#define BITS_MAP_4KB_BIT_OFFSET(phy_addr)       (PAGE_4K_INDEX(phy_addr) % BITS_PER_LONG)
+#define BITS_MAP_4KB_BIT_PATTERN(phy_addr)      (1UL << (BITS_PER_LONG - 1 - BITS_MAP_4KB_BIT_OFFSET(phy_addr)))
+
+
+#define BITS_MAP_INDEX(Paddr)            (PAGE_2M_INDEX(Paddr) / BITS_PER_LONG)
 #define BITS_MAP_BIT_OFFSET(Paddr)       (PAGE_2M_INDEX(Paddr) % BITS_PER_LONG)
 #define BITS_MAP_BIT_PATTERN(Paddr)      (1UL << (BITS_PER_LONG - 1 - BITS_MAP_BIT_OFFSET(Paddr)))
 
@@ -93,6 +101,7 @@ enum PageTableEntryAttribute{
     PEA_PAGE_SIZE           = (1UL << 7),
 
     PEA_USER_TABLE          = PEA_PRESENT | PEA_READ_WRITE | PEA_IS_USER,
+    PEA_USER_PAGE           = PEA_USER_TABLE,
     PEA_USER_ENTRY          = PEA_USER_TABLE | PEA_PAGE_SIZE, 
     PEA_SUPERVISOR_TABLE    = PEA_PRESENT | PEA_READ_WRITE,
     PEA_SUPERVISOR_ENTRY    = PEA_SUPERVISOR_TABLE | PEA_PAGE_SIZE
@@ -102,6 +111,11 @@ enum ZONE_INDEX{
     ZONE_NORMAL_INDEX = 0   ,
     ZONE_UNMAPED_INDEX      ,
     ZONE_DMA_INDEX          ,
+};
+
+struct free_area{
+    struct List free_list;
+    unsigned long nr_free;
 };
 
 struct E820{
@@ -138,6 +152,28 @@ struct GlobalMemManager{
     unsigned long   EndStruct;
 };
 
+
+typedef unsigned long pml4t_t ;
+
+struct LocalMemManager{
+    pml4t_t *pgd;
+
+    // all of this is addr
+    unsigned long StartCode,    EndCode;
+    unsigned long StartData,    EndData;
+
+    unsigned long StartRoData,  EndRoData;
+    unsigned long StartBrk,     EndBrk;
+
+    unsigned long start_bss,    end_bss;
+
+    unsigned long StartStack;
+
+    struct List vma_list;
+    unsigned long mmap_base;
+};
+
+
 struct Zone{
     struct Page *   PagesGroup;
     unsigned long   PagesCount;
@@ -148,6 +184,7 @@ struct Zone{
     unsigned long   Attribute;
 
     struct GlobalMemManager * GMM;
+    struct free_area free_area[MAX_ORDER];
 
     unsigned long   PageUsingCount;
     unsigned long   PageFreeCount;
@@ -161,6 +198,10 @@ struct Page{
     unsigned long   Attribute;
     unsigned long   RefCount;
     unsigned long   age;
+
+    unsigned char   reserved;   
+
+    struct List     buddy_list;
 };
 
 struct Slab{
@@ -187,6 +228,26 @@ struct SlabCache{
 };
 
 
+// typedef struct vm_area_struct{
+//     struct List list;
+
+//     struct LocalMemManager *vm_mm;
+
+//     // virtual memory area [start, end)
+//     unsigned long start;
+//     unsigned long end;
+
+//     unsigned long prot;
+
+//     unsigned long flags;
+
+//     unsigned long file_offset;
+
+//     file *file;
+
+// }vm_area_struct;
+
+
 void InitMemory();
 void* kmalloc(unsigned long size, unsigned long flags);
 unsigned int kfree(void *ptr);
@@ -196,7 +257,9 @@ unsigned long SlabCacheInit();
 unsigned long GetPageAttr(struct Page* p);
 unsigned long SetPageAttr(struct Page* p, unsigned long flags);
 int FreePage(struct Page* page, int number);
+int FreePage4K(struct Page* page, int number);
 struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr);
+struct Page *AllocPage4K(int ZoneSelector, int number, unsigned long PageAttr);
 int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg);
 int DeleteSlabCache(struct SlabCache *SC);
 struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)(void *Vaddr, unsigned long arg), 
@@ -204,5 +267,14 @@ struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)
 struct Slab* CreatSlab(unsigned long size, int ZoneSelector);
 void InitPageTable();
 unsigned long do_brk(unsigned long start, unsigned long size);
+int MapPage4K(unsigned long pgd, unsigned long vaddr, struct Page *page, unsigned long flags);
+struct Page *UnmapPage4K(unsigned long pgd, unsigned long vaddr);
+long MapUserRange4K(unsigned long pgd, unsigned long start, unsigned long size);
+void FreeUserPageTables(unsigned long pgd);
+
+
+void lmm_init(struct LocalMemManager *mm);
+
+int handle_page_fault(struct LocalMemManager *mm, unsigned long address, unsigned long error_code);
 
 #endif

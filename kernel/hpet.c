@@ -19,7 +19,7 @@
 #define TIME0_COMP 0x108
 
 #define TIME1_CONF 0x120
-#define TIME1_COMP 0x129
+#define TIME1_COMP 0x128
 
 #define TIME2_CONF 0x140
 #define TIME2_COMP 0x148
@@ -81,8 +81,6 @@ void hpet_init(){
     unsigned char *hpet_addr = (unsigned char *)PHY_TO_VIRT(0xfed00000);
     IoApicRetEntry  entry;
     BuildController(&hpet_controller);
-
-
 
     entry.vector        = 0x22;
     entry.DelivMode     = DELIV_M_FIXED;

@@ -136,6 +136,15 @@ static inline long verify_area(unsigned char * area, unsigned long size){
         return 0;
 }
 
+inline struct List* list_search(const struct List *head, const struct List *tar){
+    const struct List *ptr = head->next;
+    while(ptr != head){
+        if(ptr == tar) return ptr;
+        ptr = ptr->next;
+    }
+    return NULL;
+}
+
 inline void ListInit(struct List *list){
     list->prev = list;
     list->next = list;

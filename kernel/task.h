@@ -2,6 +2,7 @@
 #define TASK_H
 
 #include "lib.h"
+#include "memory.h"
 
 #include "vfs.h"
 
@@ -102,23 +103,6 @@ enum TASK_FLAG{
     CLONG_FS = 0,
     CLONG_FILES,
     CLONG_SIGNAL,
-};
-
-typedef unsigned long pml4t_t ;
-
-struct LocalMemManager{
-    pml4t_t *pgd;
-
-    // all of this is addr
-    unsigned long StartCode,    EndCode;
-    unsigned long StartData,    EndData;
-
-    unsigned long StartRoData,  EndRoData;
-    unsigned long StartBrk,     EndBrk;
-
-    unsigned long start_bss,    end_bss;
-
-    unsigned long StartStack;
 };
 
 struct ThreadStruct{

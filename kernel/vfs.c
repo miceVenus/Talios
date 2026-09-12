@@ -50,8 +50,13 @@ dir_entry* path_walk(char *path, unsigned long flags){
         memcopy(start, name, (end - start));
         name[end - start] = '\0';
         c_dir = (dir_entry*)kmalloc(sizeof(dir_entry), 0);
+        if(c_dir == NULL) return NULL;
         c_dir->name_len = end - start;
         c_dir->name = (char*)kmalloc(c_dir->name_len + 1, 0);
+        if(c_dir->name == NULL){
+            kfree(c_dir);
+            return NULL;
+        }
         memcopy(start, c_dir->name, c_dir->name_len);
         c_dir->name[c_dir->name_len] = '\0';
 

@@ -2,6 +2,7 @@
 #include "gate.h"
 #include "printk.h"
 #include "memory.h"
+#include "vma.h"
 #include "schedule.h"
 #include "smp.h"
 #include "fat32.h"
@@ -175,6 +176,7 @@ file * open_exec_file(char *path){
     ColorPrintfk(BLUE, BLACK, "entry name : %s, entry size : %d\n", dentry->name, dentry->dir_node->file_size);
 
     file * filp     = (file *) kmalloc(sizeof(file), 0);
+    if(filp == NULL) return -ENOMEM;
     memset(filp, 0, sizeof(file));
     filp->dentry    = dentry;
     filp->f_ops     = dentry->dir_node->f_ops;
@@ -189,8 +191,6 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
     unsigned long code_start_addr   = 0x800000;
     unsigned long stack_start_addr  = 0xa00000;
     unsigned long brk_start_addr    = 0xc00000;
-    unsigned long *tmp;
-    unsigned long *virtual  = NULL;
     file *filp              = NULL;
     long retval;
 
@@ -214,9 +214,16 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
     if(CURRENT->flags & PF_VFORK){
 
         CURRENT->lmm = (struct LocalMemManager * )kmalloc(sizeof(struct LocalMemManager), 0);
+        if(CURRENT->lmm == NULL) return (unsigned long)-ENOMEM;
         memset(CURRENT->lmm, 0 ,sizeof(struct LocalMemManager));
+        lmm_init(CURRENT->lmm);
 
         CURRENT->lmm->pgd = (pml4t_t *)VIRT_TO_PHY(kmalloc(PAGE_4K_SIZE, 0));
+        if(CURRENT->lmm->pgd == NULL){
+            kfree(CURRENT->lmm);
+            CURRENT->lmm = NULL;
+            return (unsigned long)-ENOMEM;
+        }
 
         // copy entries which map the addr above 0xffff800000000000(kernel space)
         memcopy(PHY_TO_VIRT(InitTaskUnions[CURRENT->cpu_id]->task.lmm->pgd) + 256, PHY_TO_VIRT(CURRENT->lmm->pgd) + 256, PAGE_4K_SIZE >> 1);
@@ -224,27 +231,13 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
         memset(PHY_TO_VIRT(CURRENT->lmm->pgd), 0, PAGE_4K_SIZE / 2);
     }
 
-    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9);
-
-    if(*tmp == NULL){
-        unsigned long * virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
-        memset(virtual, 0, PAGE_4K_SIZE);
-        SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-    }
-
-    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9);
-
-    if(*tmp == NULL){
-        virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
-        memset(virtual, 0, PAGE_4K_SIZE);
-        SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-    }
-
-    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9);
-    
-    if(*tmp == NULL){
-        struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
-        SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
+    if(MapUserRange4K((unsigned long)CURRENT->lmm->pgd, code_start_addr,
+                      stack_start_addr - code_start_addr) != 0){
+        FreeUserPageTables((unsigned long)CURRENT->lmm->pgd);
+        kfree(PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd));
+        kfree(CURRENT->lmm);
+        CURRENT->lmm = NULL;
+        return (unsigned long)-ENOMEM;
     }
 
     SetCr3(CURRENT->lmm->pgd);
@@ -266,7 +259,7 @@ unsigned long do_execve(struct PtRegs* regs, char *name){
     if((unsigned long)filp > -0x1000UL)
         return (unsigned long)filp;
 
-    memset((void *)code_start_addr, 0, PAGE_2M_SIZE);
+    memset((void *)code_start_addr, 0, stack_start_addr - code_start_addr);
     retval = filp->f_ops->read(filp, (void *)code_start_addr, filp->dentry->dir_node->file_size, &pos);
 
     return retval;
@@ -334,85 +327,90 @@ inline void exit_files(TaskStruct * task){
 }
 
 
+static long copy_user_range(unsigned long pgd, unsigned long start,
+                            unsigned long end){
+    for(unsigned long vaddr = PAGE_4K_ALIGN_DOWN(start);
+        vaddr < PAGE_4K_ALIGN_UP(end); vaddr += PAGE_4K_SIZE){
+        struct Page *page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
+                                        PATTR(PG_PTABLE_MAPPED));
+        if(page == NULL) return -ENOMEM;
+        if(MapPage4K(pgd, vaddr, page, PEA_USER_PAGE) != 0){
+            FreePage4K(page, 1);
+            return -ENOMEM;
+        }
+        memcopy((void *)vaddr, PHY_TO_VIRT(page->PhyAddr), PAGE_4K_SIZE);
+    }
+    return 0;
+}
+
 inline long copy_mm(unsigned long flags, TaskStruct * task){
-    int error = 0;
-
-    unsigned long code_start_addr   = 0x800000;
-    unsigned long stack_start_addr  = 0xa00000;
-    unsigned long brk_start_addr    = 0xc00000;
-    struct LocalMemManager * t_mm;
-
+    unsigned long code_start_addr = 0x800000;
+    unsigned long stack_start_addr = 0xa00000;
+    struct LocalMemManager *t_mm;
 
     if(flags & CLONE_VM){
-        t_mm = CURRENT->lmm;
-        goto out;
+        task->lmm = CURRENT->lmm;
+        return 0;
     }
 
-    t_mm = (struct LocalMemManager * )kmalloc(sizeof(struct LocalMemManager), 0);
+    /* The task initially inherits CURRENT->lmm from the TaskStruct copy.
+     * Do not let an allocation failure make the fork cleanup free the
+     * parent's address space. */
+    task->lmm = NULL;
+
+    t_mm = (struct LocalMemManager *)kmalloc(sizeof(struct LocalMemManager), 0);
+    if(t_mm == NULL) return -ENOMEM;
     memcopy(CURRENT->lmm, t_mm, sizeof(struct LocalMemManager));
+    lmm_init(t_mm);
+
+    if(vma_clone_all(CURRENT->lmm, t_mm) != 0){
+        kfree(t_mm);
+        return -ENOMEM;
+    }
 
     t_mm->pgd = (pml4t_t *)VIRT_TO_PHY(kmalloc(PAGE_4K_SIZE, 0));
-
-    // copy entries which map the addr above 0xffff800000000000(kernel space)
-    memcopy(PHY_TO_VIRT(InitTaskUnions[CURRENT->cpu_id]->task.lmm->pgd) + 256, PHY_TO_VIRT(t_mm->pgd) + 256, PAGE_4K_SIZE >> 1);
-
-    memset(PHY_TO_VIRT(t_mm->pgd), 0, PAGE_4K_SIZE / 2);
-
-    unsigned long * tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9);
-
-    unsigned long * virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
-    memset(virtual, 0, PAGE_4K_SIZE);
-    SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-
-    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9);
-    virtual = (unsigned long *)kmalloc(PAGE_4K_SIZE, 0);
-    memset(virtual, 0, PAGE_4K_SIZE);
-    SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_USER_TABLE);
-
-    tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9);
-    struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
-    SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
-
-    memcopy((void*)code_start_addr, PHY_TO_VIRT(p->PhyAddr), stack_start_addr - code_start_addr);
-
-    if(CURRENT->lmm->StartBrk - CURRENT->lmm->EndBrk != 0){
-
-        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)t_mm->pgd & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_GDT_SHIFT, 9);
-        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_1G_SHIFT, 9);
-        tmp = (unsigned long *)PHY_TO_VIRT((unsigned long)(*tmp) & (~0xfffUL)) + GetBits(brk_start_addr, PAGE_2M_SHIFT, 9);
-        struct Page * p = AllocPage(ZONE_NORMAL_INDEX, 1, PG_PTABLE_MAPPED);
-        SetPDE(tmp, p->PhyAddr, PEA_USER_ENTRY);
-
-        memcopy((void *)brk_start_addr, PHY_TO_VIRT(p->PhyAddr), PAGE_2M_SIZE);
+    if(t_mm->pgd == NULL){
+        vma_destroy_all(t_mm);
+        kfree(t_mm);
+        return -ENOMEM;
     }
 
-    out:
-        task->lmm = t_mm;
-        return error;
+    memcopy(PHY_TO_VIRT(InitTaskUnions[CURRENT->cpu_id]->task.lmm->pgd) + 256,
+            PHY_TO_VIRT(t_mm->pgd) + 256, PAGE_4K_SIZE >> 1);
+    memset(PHY_TO_VIRT(t_mm->pgd), 0, PAGE_4K_SIZE / 2);
 
+    if(copy_user_range((unsigned long)t_mm->pgd, code_start_addr,
+                       stack_start_addr) != 0)
+        goto fail;
+
+    if(CURRENT->lmm->EndBrk > CURRENT->lmm->StartBrk &&
+       copy_user_range((unsigned long)t_mm->pgd,
+                       CURRENT->lmm->StartBrk, CURRENT->lmm->EndBrk) != 0)
+        goto fail;
+
+    task->lmm = t_mm;
+    return 0;
+
+fail:
+    FreeUserPageTables((unsigned long)t_mm->pgd);
+    vma_destroy_all(t_mm);
+    kfree(PHY_TO_VIRT((unsigned long)t_mm->pgd));
+    kfree(t_mm);
+    return -ENOMEM;
 }
 
 inline void exit_mm(TaskStruct * task){
-    unsigned long code_start_addr = 0x800000;
-    unsigned long *tmp1;
-    unsigned long *tmp2;
-    unsigned long *tmp3;
-    if(task->flags & PF_VFORK)
-        return;
+    if(task->flags & PF_VFORK) return;
 
-    if(task->lmm->pgd != NULL){
-        tmp1 = PHY_TO_VIRT((unsigned long *)((unsigned long)task->lmm->pgd & (~0xfffUL) + GetBits(code_start_addr, PAGE_GDT_SHIFT, 9)));
-        tmp2 = PHY_TO_VIRT((unsigned long *)((unsigned long)*tmp1 & (~0xfffUL) + GetBits(code_start_addr, PAGE_1G_SHIFT, 9)));
-        tmp3 = PHY_TO_VIRT((unsigned long *)((unsigned long)*tmp2 & (~0xfffUL) + GetBits(code_start_addr, PAGE_2M_SHIFT, 9)));
-
-        FreePage((struct Page *)(MMS.PagesGroup + PAGE_2M_INDEX(*tmp3)), 1);
-        kfree(tmp2);
-        kfree(tmp1);
-        kfree(PHY_TO_VIRT((unsigned long*)task->lmm->pgd));
+    if(task->lmm != NULL && task->lmm->pgd != NULL){
+        FreeUserPageTables((unsigned long)task->lmm->pgd);
     }
-
-    if(task->lmm != NULL)
+    if(task->lmm != NULL){
+        vma_destroy_all(task->lmm);
+        if(task->lmm->pgd != NULL)
+            kfree(PHY_TO_VIRT((unsigned long)task->lmm->pgd));
         kfree(task->lmm);
+    }
 }
 
 
@@ -559,6 +557,8 @@ void TaskInit(){
     InitLmm.start_bss   =   (unsigned long)(&_bss);
     InitLmm.end_bss     =   (unsigned long)(&_ebss);
     InitLmm.StartStack  =   _stack_start;
+    if(InitLmm.vma_list.next == NULL)
+        lmm_init(&InitLmm);
 
     SetTss( (unsigned int*)&InitTss[cpu_id], InitThreads[cpu_id]->rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
             InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,

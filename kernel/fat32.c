@@ -103,8 +103,9 @@ unsigned int fat32_table_read(FAT32_sb_info *fsb, unsigned int index){
     ide_transfer(ATA_READ_CMD, fsb->fat1_start_sector + sec_index, 1, (unsigned char *)fat_slace);
 
     if(fat_slace[sec_offset] < 0xffffff7) {
+        unsigned int clus = fat_slace[sec_offset];
         kfree(fat_slace);
-        return fat_slace[sec_offset];
+        return clus;
     }else{
         kfree(fat_slace);
         return 0;

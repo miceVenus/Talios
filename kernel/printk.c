@@ -234,7 +234,7 @@ int PrintkInit(){
         .cursorY = 0,
         .charWidth = 8,
         .charHeight = 16,
-        .framebuffer = (uint32_t*)0xffff800003000000,
+        .framebuffer = (uint32_t*)0xffff808000000000,
     };
 
     spin_lock_init(&screenInfo.lock);

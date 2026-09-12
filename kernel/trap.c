@@ -2,6 +2,8 @@
 #include "lib.h"
 #include "printk.h"
 #include "gate.h"
+#include "memory.h"
+#include "task.h"
 
 
 
@@ -58,13 +60,16 @@ void DoInvalidTss(unsigned long rsp, unsigned long ErroCode){
 
 
 void DoPageFault(unsigned long rsp, unsigned long ErroCode){
-    uint64_t  cr2 = 0;
+    unsigned long cr2 = 0;
     __asm__ volatile("movq %%cr2,   %0":"=r"(cr2)::"memory");
 
-    uint64_t* rip = (uint64_t *)(rsp + 0x98);
+    unsigned long *rip = (unsigned long *)(rsp + 0x98);
+
+    if(handle_page_fault(CURRENT->lmm, cr2, ErroCode) == 0)
+        return;
     
     ColorPrintfk(RED, BLACK, "do_pageFault(14) In RIP: %p, RSP: %p, ERRCODE: %X \n", \
-        rip, rsp, ErroCode);
+        (void *)*rip, (void *)rsp, ErroCode);
     
     if(ErroCode & 0x1){
         ColorPrintfk(RED, BLACK, "This Exception Occurs During Access An Protected Page \n");
@@ -73,9 +78,9 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
     }
 
     if(ErroCode & 0x2){
-        ColorPrintfk(RED, BLACK, "This Exception Occurs During Reading A Page \n");
-    }else{
         ColorPrintfk(RED, BLACK, "This Exception Occurs During Writing A Page \n");
+    }else{
+        ColorPrintfk(RED, BLACK, "This Exception Occurs During Reading A Page \n");
     }
 
     if(ErroCode & 0x4){
@@ -96,9 +101,7 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 
     ColorPrintfk(RED, BLACK, "Page Fault Addr: %p \n", (void*)cr2);
 
-    while(1){
-        hlt();
-    }
+    while(1) hlt();
 }
 
 
@@ -144,4 +147,3 @@ void DoUndefinedOpcodeFault(unsigned long rsp, unsigned long ErroCode){
         hlt();
     }
 }
-

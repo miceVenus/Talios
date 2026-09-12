@@ -52,8 +52,6 @@ void main(){
 
     InitMemory();
 
-    SlabCacheInit();
-
     InitPageTable();
 
     // memory init end

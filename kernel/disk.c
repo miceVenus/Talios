@@ -279,7 +279,7 @@ long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buf
 void end_request(struct block_buffer_node *node){
     if(node == NULL) ColorPrintfk(RED, BLACK, "bad end request!!!\n");
 
-    kfree(disk_request_queue.in_using);
+    // kfree(disk_request_queue.in_using);
     disk_request_queue.in_using = NULL;
 
     disk_flags = 0;
@@ -288,15 +288,12 @@ void end_request(struct block_buffer_node *node){
 
     node->wait_queue.tsk->state = TASK_RUNING;
     scheduler * ts = &task_schedulers[CURRENT->cpu_id];
-    // if(ListIsEmpty(&ts->task_queue.list))
-    //     node->wait_queue.tsk->vrun_time = CURRENT->vrun_time > 4 ? CURRENT->vrun_time - 4 : 0;
-    // else{
-    //     node->wait_queue.tsk->vrun_time = max(node->wait_queue.tsk->vrun_time, ts->min_vrun_time - 2);
-    // }
 
     insert_task_queue(node->wait_queue.tsk);
     // task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies = 0;
     CURRENT->flags |= NEED_SCHEDULE;
+
+    kfree(node);
 }
 
 void get_disk_id_handler(unsigned long nr, unsigned long arg){

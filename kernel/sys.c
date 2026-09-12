@@ -240,7 +240,7 @@ unsigned long sys_brk(unsigned long brk){
 
     TaskStruct *cur = CURRENT;
 
-    unsigned long new_brk = PAGE_2M_ALIGN_UP(brk);
+    unsigned long new_brk = PAGE_4K_ALIGN_UP(brk);
     if(new_brk == 0)
         return cur->lmm->StartBrk;
     
@@ -345,4 +345,3 @@ unsigned long sys_getdents(int fd, void * dirent, long count){
         ret = filp->f_ops->readdir(filp, dirent, fill_dentry);
     return ret;
 }
-
