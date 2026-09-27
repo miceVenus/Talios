@@ -172,6 +172,8 @@ void IoApicRteWrite(unsigned char index, unsigned long value){
 
 void IoApicPageTableRemap(){
     unsigned long IoApicAddr    =   (unsigned long)PHY_TO_VIRT(0xfec00000);
+    
+    // MMIO Device fixed physical addr
     IoApicMap.PhysicalAddr      =   0xfec00000;
     IoApicMap.VirtualIndexAddr  =   (unsigned char *)IoApicAddr;
     IoApicMap.VirtualDataAddr   =   (unsigned int *)(IoApicAddr + 0x10);
@@ -182,18 +184,18 @@ void IoApicPageTableRemap(){
 
     if(*tmp == 0){
         void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-        SetPML4E(tmp, VIRT_TO_PHY(virtual), 0x3);
+        SetPML4E(tmp, VIRT_TO_PHY(virtual), PEA_SUPERVISOR_TABLE);
     }
     tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + GetBits(IoApicAddr, PAGE_1G_SHIFT, 9);
     
     if(*tmp == 0){
         void *virtual = kmalloc(PAGE_4K_SIZE, 0);
-        SetPDPTE(tmp, VIRT_TO_PHY(virtual), 0x3);
+        SetPDPTE(tmp, VIRT_TO_PHY(virtual), PEA_SUPERVISOR_TABLE);
     }
 
     tmp =   (unsigned long*)((unsigned long)PHY_TO_VIRT(*tmp & (~0xfff))) + GetBits(IoApicAddr, PAGE_2M_SHIFT, 9);
 
-    SetPDE(tmp, IoApicMap.PhysicalAddr, 0x83 | 8 | 16);
+    SetPDE(tmp, IoApicMap.PhysicalAddr, PEA_SUPERVISOR_ENTRY | PEA_WRITE_THROUGH | PEA_CACHE_DISABLE);
 
     FlushTLB();
 
@@ -208,6 +210,7 @@ void IoApicPageTableRemap(){
 
 void InitIoApic(){
 
+    // remap IoApic's fixed addr
     IoApicPageTableRemap();
 
     *IoApicMap.VirtualIndexAddr = 0;
@@ -224,8 +227,10 @@ void InitIoApic(){
     ColorPrintfk(BLUE, BLACK, "IO APIC VERSION : %X", GetBits(IoApicVersion, 0, 8));
     mfence();
 
+
+    // we assume that ioapic have 24 pins
     for(unsigned int i = 0x10; i < 0x40; i += 2){
-        IoApicRteWrite(i, 0x10020 + ((i - 0x10) >> 1));
+        IoApicRteWrite(i, 0x10020 + ((i - 16) >> 1));
     }
 
     for(unsigned int i = 32; i < (32 + 24); i++){

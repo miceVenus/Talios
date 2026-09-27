@@ -161,7 +161,7 @@ unsigned long sys_read(int fd, void * buf, unsigned long count){
 
     file * filp = CURRENT->handle_array[fd];
 
-    if(filp->f_ops && filp->f_ops->close) 
+    if(filp->f_ops && filp->f_ops->read) 
         ret = filp->f_ops->read(filp, buf, count, &filp->position);
     return ret;
 }
@@ -179,7 +179,7 @@ unsigned long sys_write(int fd, void * buf, unsigned long count){
     ColorPrintfk(BLUE, BLACK, "count : %d\n", count);
     file * filp = CURRENT->handle_array[fd];
 
-    if(filp->f_ops && filp->f_ops->close){
+    if(filp->f_ops && filp->f_ops->write){
         ret = filp->f_ops->write(filp, buf, count, &filp->position);
     }
 
@@ -199,7 +199,7 @@ unsigned long sys_lseek(int fd, long offset, int whence){
 
     file * filp = CURRENT->handle_array[fd];
 
-    if(filp->f_ops && filp->f_ops->close){
+    if(filp->f_ops && filp->f_ops->lseek){
         ret = filp->f_ops->lseek(filp, offset, whence);
     }
 
@@ -341,7 +341,7 @@ unsigned long sys_getdents(int fd, void * dirent, long count){
 
     file * filp = CURRENT->handle_array[fd];
 
-    if(filp->f_ops && filp->f_ops->close) 
+    if(filp->f_ops && filp->f_ops->readdir) 
         ret = filp->f_ops->readdir(filp, dirent, fill_dentry);
     return ret;
 }

@@ -13,40 +13,35 @@ int ListIsEmpty(struct List *list);
 void ListForeAdd(struct List *new, struct List *list);
 int ListDelete(struct List *list);
 
-void __acquire(semaphore_t *semaphore){
-    wait_queue_t wait;
-    ListInit(&wait.wait_list);
-    wait.tsk = CURRENT;
-    CURRENT->state = TASK_UNINTERRUPTABLE;
-    ListForeAdd(&wait.wait_list, &semaphore->wait.wait_list);
-    schedule();
-    ListDelete(&wait.wait_list);
-}
-
-void semaphore_acquire(semaphore_t *semaphore){
-    if(atomic_read(&semaphore->counter) > 0)
-        atomic_dec(&semaphore->counter);
-    else
-        __acquire(semaphore);
-}
-
-
-void __release(semaphore_t *semaphore){
-    wait_queue_t * wait = ContainerOf(&semaphore->wait.wait_list, wait_queue_t, wait_list);
-    ListDelete(&wait->wait_list);
-    wait->tsk->state = TASK_RUNING;
-    insert_task_queue(wait->tsk);
-    CURRENT->flags |= NEED_SCHEDULE;
-}
-
-void semaphore_release(semaphore_t *semaphore){
-    if(ListIsEmpty(&semaphore->wait.wait_list))
-        atomic_inc(&semaphore->counter);
-    else
-        __release(semaphore);
-}
-
 void semaphore_init(semaphore_t *semaphore, unsigned long count){
-    atomic_write(&semaphore->counter, count);
-    wait_queue_init(&semaphore->wait, NULL);
+    atomic_write(&semaphore->count, count);
+    wait_queue_init(&semaphore->waiters, NULL);
+}
+
+
+void semaphore_acquire(struct semaphore *sem){
+
+    spin_lock(&sem->lock);
+
+    if (sem->count > 0) {
+        sem->count--;
+        spin_unlock(&sem->lock);
+        return;
+    }
+
+    spin_unlock(&sem->lock);
+    sleep_on(&sem->waiters);
+}
+
+void semaphore_release(struct semaphore *sem){
+
+    spin_lock(&sem->lock);
+
+    if (!ListIsEmpty(&sem->waiters.wait_list)) {
+        wake_up(&sem->waiters, TASK_RUNING);
+    } else {
+        sem->count++;
+    }
+
+    spin_unlock(&sem->lock);
 }

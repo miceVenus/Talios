@@ -1,21 +1,6 @@
 #ifndef SPIN_LOCK
 #define SPIN_LOCK
 
-#include "task.h"
-
-#define preempt_disable()               \
-        do{                             \
-            CURRENT->preempt_count++;   \
-        }while (0);                     \
-
-#define preempt_enable()                \
-        do{                             \
-            CURRENT->preempt_count--;   \
-        }while (0);                     \
-
-
-//      without preempt count this macro is dangeous;
-
 #define __LOCK(lock_) \
         __asm__ __volatile__(   \
         "1:             \n\t"   \
@@ -48,19 +33,11 @@ typedef struct SpinLock_T{
 volatile unsigned int lock; // lock : 1 unlock : 0
 }SpinLock_T;
 
-static inline void spin_lock_init(SpinLock_T *lock){
-    lock->lock = 0;
-}
+void spin_lock_init(SpinLock_T *lock);
 
 // lock which is not allow re-entrying
-static inline void spin_lock(SpinLock_T *lock){
-    preempt_disable();
-    __LOCK(lock);
-}
+void spin_lock(SpinLock_T *lock);
 
-static inline void spin_unlock(SpinLock_T *lock){
-    __UNLOCK(lock);
-    preempt_enable();
-}
+void spin_unlock(SpinLock_T *lock);
 
 #endif

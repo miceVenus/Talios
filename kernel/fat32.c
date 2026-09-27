@@ -182,7 +182,7 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
 
             found_target_dir:{
                 index_node * tnode = (index_node *)kmalloc(sizeof(index_node), 0);
-                memset(tnode, sizeof(index_node), 0);
+                memset(tnode, 0, sizeof(index_node));
                 tnode->f_ops = &FAT32_f_ops;
                 tnode->inode_ops = &FAT32_inode_ops;
                 tnode->sb = fsb;
@@ -192,7 +192,7 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
 
                 tnode->blocks = (tnode->file_size + fsb_info->byte_per_clus - 1) >> BYTE_PER_VSEC_SHIFT;
                 FAT32_inode_info* tinfo = (FAT32_inode_info*)kmalloc(sizeof(FAT32_inode_info), 0);
-                memset(tnode, sizeof(FAT32_inode_info), 0);
+                memset(tnode, 0, sizeof(FAT32_inode_info));
                 tinfo->first_cluster = ((entry + i)->dir_fst_clus_hi << 16) + (entry + i)->dir_fst_clus_lo;
                 tinfo->create_date = (entry + i)->dir_crt_Date;
                 tinfo->create_time = (entry + i)->dir_crt_time;
