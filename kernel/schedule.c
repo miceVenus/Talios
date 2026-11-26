@@ -1,151 +1,221 @@
 #include "schedule.h"
-#include "task.h"
-#include "lib.h"
+#include "smp.h"
+#ifdef TALIOS_SCHED_CHECK
+#include "apic.h"
 #include "printk.h"
+#endif
 
-
-scheduler task_schedulers[NR_CPUS];
 extern union TaskUnion *InitTaskUnions[NR_CPUS];
 
-struct List * ListNext(struct List *next);
-int ListDelete(struct List *list);
-int ListIsEmpty(struct List * list);
-void ListForeAdd(struct List *new, struct List *list);
+/* The table lock pins its members and serializes selection of the minimum.
+ * Always take it before a task lock. No device or VM lock is acquired here. */
+static struct List tasks;
+static SpinLock_T table_lock;
+static long min_vrun_time, next_pid = 1;
+static unsigned long idle_mask;
+static long budget[NR_CPUS];
 
-struct TaskStruct * get_next_task(){
-
-    // long flags = get_rflags();
-    // cli();
-
-    scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
-    union TaskUnion *InitTaskUnion = InitTaskUnions[CURRENT->cpu_id];
-    TaskStruct * task = NULL;
-
-    if(ListIsEmpty(&task_scheduler->task_queue.list)){
-        // ColorPrintfk(BLUE, BLACK, "empty task queue, %X\n", CURRENT->cpu_id);
-        task_scheduler->min_vrun_time = CURRENT->vrun_time;
-        task = &InitTaskUnion->task;
-        goto out;
-    }
-
-    task = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list);
-    ListDelete(&task->list);
-    task_scheduler->running_task_count -= 1;
-
-    // task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
-    
-    task_scheduler->min_vrun_time = min(task->vrun_time, CURRENT->vrun_time);
-    // if(ListIsEmpty(&task_scheduler->task_queue.list))
-    //     task_scheduler->min_vrun_time = task->vrun_time;
-    // else
-    //     task_scheduler->min_vrun_time = ContainerOf(ListNext(&task_scheduler->task_queue.list), struct TaskStruct, list)->vrun_time;
-
-    out:
-        // if(flags & 0x200) sti();
-        return task;
+static long tick_cost(const TaskStruct *task){
+    return task->priority == 2 ? 2 : 1;
 }
 
-void insert_task_queue(TaskStruct * task){
-    // long flags = get_rflags();
-    // cli();
-
-    union TaskUnion *InitTaskUnion = InitTaskUnions[CURRENT->cpu_id];
-    scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
-
-    TaskStruct * tmp = ContainerOf(ListNext(&task_scheduler->task_queue.list), TaskStruct, list);
-    if(task == &InitTaskUnion->task){
-        goto out;
+static void update_min(void){
+    long lowest = __LONG_MAX__;
+    for(struct List *p = tasks.next; p != &tasks; p = p->next){
+        TaskStruct *t = ContainerOf(p, TaskStruct, list);
+        if(t->state == TASK_RUNNABLE || t->state == TASK_RUNNING)
+            lowest = min(lowest, t->vrun_time);
     }
-    if(ListIsEmpty(&task_scheduler->task_queue.list)){
-
-    }else{
-        while(tmp->vrun_time <= task->vrun_time){
-            if(tmp == task) goto out;
-            tmp = ContainerOf(ListNext(&tmp->list), TaskStruct, list);
-        }
-    }
-    ListForeAdd(&task->list, &tmp->list);
-
-    task_scheduler->running_task_count += 1;
-    task_scheduler->min_vrun_time = min(task_scheduler->min_vrun_time, task->vrun_time);
-    
-    out:
-
-        return;
-        // if(flags & 0x200) 
-        //     sti();
+    if(lowest != __LONG_MAX__) min_vrun_time = max(min_vrun_time, lowest);
 }
 
-void schedule(){
-
-    CURRENT->preempt_count++;
-    scheduler *task_scheduler = &task_schedulers[CURRENT->cpu_id];
-    struct TaskStruct *current = CURRENT;
-    current->flags &= (~NEED_SCHEDULE);
-
-    struct TaskStruct *task = get_next_task();
-
-    if(current->vrun_time >= task->vrun_time || current->state != TASK_RUNING){
-
-        // if current == task it is means this schedule is not start from interruption
-        // so it would break some thing
-        if(current == task){
-            goto no_switch_out;
-        }
-
-        // make task priority has its sense for now we have not perserve task`s cpu time
-        task_scheduler->CPU_exec_task_jiffies = 0;
-        
-        if(current->state == TASK_RUNING)
-            insert_task_queue(current);
-
-        if(task_scheduler->CPU_exec_task_jiffies <= 0){
-            switch(task->priority){
-                case 0:
-                case 1:
-                    task_scheduler->CPU_exec_task_jiffies = 4 / task_scheduler->running_task_count;
-                    break;
-                
-                case 2:
-                    task_scheduler->CPU_exec_task_jiffies = 4 / task_scheduler->running_task_count * 3;
-                    break;
-            }
-        }
-
-        SWITCH_MM(current, task);
-        SWITCH_TO(current, task);
-
-        return;
-    }else{
-        insert_task_queue(task);
-        if(!task_scheduler->CPU_exec_task_jiffies){
-            switch (task->priority){
-                case 0:
-                case 1:
-                    task_scheduler->CPU_exec_task_jiffies = 4 / task_scheduler->running_task_count;
-                    break;
-                case 2:
-                default:
-                    task_scheduler->CPU_exec_task_jiffies = 4 / task_scheduler->running_task_count * 3;
-                    break;
-            }
-        }
-    }
-
-    no_switch_out:
-        CURRENT->preempt_count--;
-        return;
+void scheduler_init(void){
+    ListInit(&tasks);
 }
 
-void scheduler_init(){
-    memset(task_schedulers, 0, sizeof(scheduler) * NR_CPUS);
-    scheduler *task_scheduler = NULL;
-    for(int i = 0; i < NR_CPUS; i++){
-        task_scheduler = &task_schedulers[i];
-        task_scheduler->CPU_exec_task_jiffies    = 4;
-        task_scheduler->running_task_count       = 1;
-        ListInit(&task_scheduler->task_queue.list);
-        task_scheduler->min_vrun_time            = CURRENT->vrun_time;
-        task_scheduler->task_queue.vrun_time     = 0x7fffffffffffffff;
+void scheduler_tick(void){
+    TaskStruct *t = CURRENT;
+    int cpu = t->cpu_id;
+    if(t == &InitTaskUnions[cpu]->task) return;
+    unsigned long irq = spin_lock_irqsave(&table_lock);
+    raw_spin_lock(&t->lock);
+    long cost = tick_cost(t);
+    t->vrun_time += cost;
+    budget[cpu] -= cost;
+    if(budget[cpu] <= 0) t->flags |= NEED_SCHEDULE;
+    raw_spin_unlock(&t->lock);
+    update_min();
+    spin_unlock_irqrestore(&table_lock, irq);
+}
+
+/* The caller still holds the lock protecting its wait condition. A wake
+ * before schedule() sees a CPU owner and restores RUNNING in place. */
+void sched_prepare_sleep(void){
+    TaskStruct *t = CURRENT;
+    unsigned long irq = spin_lock_irqsave(&table_lock);
+    raw_spin_lock(&t->lock);
+    t->state = TASK_UNINTERRUPTABLE;
+    raw_spin_unlock(&t->lock);
+    spin_unlock_irqrestore(&table_lock, irq);
+}
+
+void wakeup_process(TaskStruct *t){
+    unsigned long irq = spin_lock_irqsave(&table_lock);
+    unsigned long kick = 0;
+    raw_spin_lock(&t->lock);
+    if(t->state == TASK_UNINTERRUPTABLE){
+        t->vrun_time = max(t->vrun_time, min_vrun_time - tick_cost(t));
+        t->state = t->cpu_id < 0 ? TASK_RUNNABLE : TASK_RUNNING;
+        if(t->state == TASK_RUNNABLE){
+            kick = idle_mask;
+            CURRENT->flags |= NEED_SCHEDULE;
+        }
+    }
+    raw_spin_unlock(&t->lock);
+    raw_spin_unlock(&table_lock);
+    smp_kick(kick);
+    irq_restore(irq);
+}
+
+long sched_publish(TaskStruct *child){
+    TaskStruct *parent = CURRENT;
+    unsigned long irq = spin_lock_irqsave(&table_lock);
+    if(child->vfork_parent){
+        raw_spin_lock(&parent->lock);
+        parent->state = TASK_UNINTERRUPTABLE;
+        raw_spin_unlock(&parent->lock);
+    }
+    long pid = child->pid = next_pid++;
+    child->cpu_id = -1;
+    child->state = TASK_RUNNABLE;
+    child->vrun_time = max(parent->vrun_time, min_vrun_time);
+    ListForeAdd(&child->list, &tasks);
+    unsigned long kick = idle_mask;
+    int wait = child->vfork_parent != NULL;
+    parent->flags |= NEED_SCHEDULE;
+    raw_spin_unlock(&table_lock);
+    smp_kick(kick);
+    if(wait) schedule();
+    irq_restore(irq);
+    return pid;
+}
+
+void schedule(void){
+    unsigned long irq = spin_lock_irqsave(&table_lock);
+    TaskStruct *prev = CURRENT;
+    int cpu = prev->cpu_id;
+    TaskStruct *idle = &InitTaskUnions[cpu]->task;
+    idle_mask &= ~(1UL << cpu);
+    raw_spin_lock(&prev->lock);
+    prev->flags &= ~NEED_SCHEDULE;
+    if(prev->state == TASK_RUNNING) prev->state = TASK_RUNNABLE;
+
+    TaskStruct *next = idle;
+    long runnable = 0;
+    for(struct List *p = tasks.next; p != &tasks; p = p->next){
+        TaskStruct *t = ContainerOf(p, TaskStruct, list);
+        if(t != prev) raw_spin_lock(&t->lock);
+        if(t->state == TASK_RUNNABLE && (t == prev || t->cpu_id < 0)){
+            runnable++;
+            if(next == idle || t->vrun_time < next->vrun_time) next = t;
+        }
+        if(t != prev) raw_spin_unlock(&t->lock);
+    }
+    if(next != prev) raw_spin_lock(&next->lock);
+    next->state = TASK_RUNNING;
+    next->cpu_id = cpu;
+    if(next != idle){
+        /* Rotate ties without modifying the virtual time. */
+        ListDelete(&next->list);
+        ListForeAdd(&next->list, &tasks);
+        long slice = max(1L, 4 / runnable);
+        budget[cpu] = slice * (next->priority == 2 ? 3 : 1);
+    }
+    update_min();
+    if(next == prev){
+        raw_spin_unlock(&prev->lock);
+        spin_unlock_irqrestore(&table_lock, irq);
+        return;
+    }
+
+    raw_spin_unlock(&next->lock);
+    raw_spin_unlock(&table_lock);
+    vm_switch_root(cpu, (unsigned long)next->lmm->pgd);
+    switch_context(prev, next, &prev->thread->rsp, &prev->thread->rip,
+                   next->thread->rsp, next->thread->rip);
+    irq_restore(irq);
+}
+
+#ifdef TALIOS_SCHED_CHECK
+/* Independently record the stack each CPU actually switched onto. */
+static int check_ownership(TaskStruct *task){
+    static SpinLock_T lock;
+    static TaskStruct *owners[NR_CPUS];
+    static int reported;
+    unsigned int cpu = 0, apic = get_lapic_id();
+    while(cpu < smp_cpu_count && smp_apic_ids[cpu] != apic) cpu++;
+    if(cpu == smp_cpu_count || task->cpu_id != (long)cpu) return -1;
+    int busy = 0, result = 0;
+    raw_spin_lock(&lock);
+    owners[cpu] = (task->flags & PF_KTHREAD) ? NULL : task;
+    for(unsigned int i = 0; i < smp_cpu_count; i++){
+        if(owners[i]) busy++;
+        if(i != cpu && owners[i] == task) result = -1;
+    }
+    if(!result && busy == (int)smp_cpu_count && !reported){
+        result = busy;
+        reported = 1;
+    }
+    raw_spin_unlock(&lock);
+    return result;
+}
+#endif
+
+/* Called on the incoming kernel stack, including the first dispatch of a
+ * new task. Only now can another CPU use or free the outgoing stack. */
+void sched_finish_switch(TaskStruct *prev){
+    int dead = prev->state == TASK_DEAD;
+#ifdef TALIOS_SCHED_CHECK
+    int ownership = check_ownership(CURRENT);
+#endif
+    prev->cpu_id = -1;
+    raw_spin_unlock(&prev->lock);
+    if(dead) kfree(prev);
+#ifdef TALIOS_SCHED_CHECK
+    if(ownership < 0) ColorPrintfk(RED, BLACK, "SCHED FAIL task active on two CPUs\n");
+    if(ownership > 0) ColorPrintfk(BLUE, BLACK, "SCHED concurrent tasks %d\n", ownership);
+#endif
+}
+
+void sched_exit(void){
+    cli();
+    TaskStruct *t = CURRENT;
+    raw_spin_lock(&table_lock);
+    raw_spin_lock(&t->lock);
+    ListDelete(&t->list);
+    for(struct List *p = tasks.next; p != &tasks; p = p->next){
+        TaskStruct *child = ContainerOf(p, TaskStruct, list);
+        if(child->parent == t) child->parent = &InitTaskUnions[0]->task;
+    }
+    t->state = TASK_DEAD;
+    raw_spin_unlock(&t->lock);
+    raw_spin_unlock(&table_lock);
+    schedule();
+    __builtin_unreachable();
+}
+
+void sched_idle(void){
+    int cpu = CURRENT->cpu_id;
+    for(;;){
+        cli();
+        raw_spin_lock(&table_lock);
+        struct List *p = tasks.next;
+        while(p != &tasks && ContainerOf(p, TaskStruct, list)->state != TASK_RUNNABLE)
+            p = p->next;
+        int has_work = p != &tasks;
+        if(!has_work) idle_mask |= 1UL << cpu;
+        raw_spin_unlock(&table_lock);
+        if(has_work) schedule();
+        else __asm__ volatile("sti\n\thlt\n.globl sched_idle_resume\nsched_idle_resume:" ::: "memory");
     }
 }

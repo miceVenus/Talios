@@ -14,6 +14,7 @@ typedef unsigned long vm_flags_t;
 
 typedef struct vm_area_struct{
     struct List list;
+    struct List object_link;
 
     struct LocalMemManager *vm_mm;
 
@@ -29,7 +30,7 @@ typedef struct vm_area_struct{
 
     unsigned long file_offset;
 
-    file *file;
+    struct vm_object *object;
 
 }vm_area_struct;
 

@@ -61,8 +61,7 @@ struct IoApicRetEntry{
     {
         struct physical{
             unsigned int    reserverd1  :24,    //32~55
-                            physic_dst  :4,     //56~59
-                            reserverd2  :4;     //60~63
+                            physic_dst  :8;     //56~63
 
         }physical;
         struct logical{

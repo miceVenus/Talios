@@ -1,7 +1,6 @@
 #ifndef SEMAPHORE_H
 #define SEMAPHORE_H
 
-#include "atomic.h"
 #include "spin_lock.h"
 #include "lib.h"
 #include "waitqueue.h"
@@ -15,6 +14,7 @@ typedef struct semaphore {
 }semaphore_t;
 
 void semaphore_init(semaphore_t *semaphore, unsigned long count);
-void wait_queue_init(wait_queue_t * wait_queue, struct TaskStruct *tsk);
+void semaphore_acquire(semaphore_t *sem);
+void semaphore_release(semaphore_t *sem);
 
 #endif

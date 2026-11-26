@@ -58,6 +58,7 @@ struct SlabCache KmallocSlabSet[KMALLOC_SLAB_SIZE] = {
 
 
 struct Slab* CreatSlab(unsigned long size, int ZoneSelector){
+    if(!size || size > PAGE_2M_SIZE) return NULL;
     struct Slab* slab = (struct Slab*)kmalloc(sizeof(struct Slab), 0);
 
     if(!slab) return NULL;
@@ -65,7 +66,7 @@ struct Slab* CreatSlab(unsigned long size, int ZoneSelector){
     memset(slab, 0, sizeof(struct Slab));
 
     ListInit(&(slab->list));
-    slab->FreeCount     = PAGE_2M_SIZE / size;
+    slab->ColorCount = slab->FreeCount = PAGE_2M_SIZE / size;
     slab->ColorLength   = BITS_MAP_LENGTH(slab->FreeCount);
     slab->ColorMap      = (unsigned long*)kmalloc(sizeof(unsigned long) * slab->ColorLength, 0);
 
@@ -84,6 +85,7 @@ struct Slab* CreatSlab(unsigned long size, int ZoneSelector){
 
 struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)(void *Vaddr, unsigned long arg), 
                                     void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg){
+    if(!SlabSize || SlabSize > PAGE_2M_SIZE) return NULL;
     struct SlabCache *SC= (struct SlabCache *)kmalloc(sizeof(struct SlabCache), 0);
     if(SC == NULL)  return NULL;
 
@@ -108,20 +110,17 @@ struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)
 
 int DeleteSlabCache(struct SlabCache *SC){
     if(SC->TotalUse) return 0;
-    struct Slab* slab       = SC->CachePool;
-    struct Slab* tmp_slab   = NULL;
-    while(!ListIsEmpty(&slab->list)){
+    struct Slab *head = SC->CachePool;
+    while(!ListIsEmpty(&head->list)){
+        struct Slab *slab = ContainerOf(head->list.next, struct Slab, list);
         ListDelete(&slab->list);
         kfree(slab->ColorMap);
         FreePage(slab->page, 1);
-        tmp_slab = slab;
-        slab = ContainerOf(ListNext(&slab->list), struct Slab, list);
-        kfree(tmp_slab);
+        kfree(slab);
     }
-    ListDelete(&slab->list);
-    kfree(slab->ColorMap);
-    FreePage(slab->page, 1);
-    kfree(slab);
+    kfree(head->ColorMap);
+    FreePage(head->page, 1);
+    kfree(head);
     kfree(SC);
     return 1;
 }
@@ -179,7 +178,9 @@ int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
     do{
         if(slab->Vaddress <= Vaddress && ((unsigned long)(Vaddress - slab->Vaddress) < PAGE_2M_SIZE)){
             index = (unsigned long)(Vaddress - slab->Vaddress) / SC->size;
-            *(slab->ColorMap + (index >> 6)) ^= (1UL << index % 64);
+            if((unsigned long)(Vaddress - slab->Vaddress) % SC->size || index >= slab->ColorCount ||
+               !(slab->ColorMap[index >> 6] & (1UL << (index % 64)))) return 0;
+            slab->ColorMap[index >> 6] &= ~(1UL << (index % 64));
             slab->FreeCount++;
             slab->UsingCount--;
 
@@ -189,7 +190,7 @@ int FreeSlab(struct SlabCache *SC, void *Vaddress, unsigned long arg){
             void *Vaddr = (void *)((unsigned long)slab->Vaddress + (index * SC->size));
             if(SC->Destructor != NULL) SC->Destructor(Vaddr, arg);
 
-            if(slab->UsingCount == 0 && SC->TotalFree >= slab->ColorCount * 1.5){
+            if(slab != SC->CachePool && !slab->UsingCount && SC->TotalFree >= slab->ColorCount * 3 / 2){
                 SC->TotalFree -= slab->ColorCount;
                 ListDelete(&slab->list);
                 kfree(slab->ColorMap);
@@ -315,6 +316,7 @@ struct Page *get_page_from_freelist(struct Zone *zone, unsigned int order, int a
                 page->ZoneStruct->TotalPagesLink += (1 << order);
 
                 for(int j = 0; j < (1 << order); j++){
+                    (page + j)->allocation_order = j ? -1 : (int)order;
                     (page + j)->RefCount++;
                     (page + j)->Attribute |= alloc_flags;
                 }
@@ -376,6 +378,7 @@ void __free_pages(struct Page *page, int order){
     zone->TotalPagesLink -= (1 << order);
 
     for(int j = 0; j < (1 << order); j++){
+        (page + j)->allocation_order = -1;
         (page + j)->RefCount--;
         (page + j)->Attribute = 0;
     }
@@ -410,13 +413,15 @@ static unsigned int get_order(unsigned int number){
     return order;
 }
 
+static SpinLock_T buddy_lock, slab_lock;
+
 struct Page *alloc_pages(int zone_selector, unsigned int number, unsigned long PageAttr){
     unsigned long attr = PageAttr;
     if(zone_selector != ZONE_UNMAPED_INDEX) attr |= PATTR(PG_PTABLE_MAPPED);
 
     unsigned int order = get_order(number);
 
-    if(order >= MAX_ORDER) return NULL;
+    if(!number || order >= MAX_ORDER) return NULL;
 
     for(int i = 0; i < MMS.ZonesCount; i++){
         struct Zone * zone = MMS.ZonesGroup + i;
@@ -424,7 +429,9 @@ struct Page *alloc_pages(int zone_selector, unsigned int number, unsigned long P
             continue;
         }
 
+        unsigned long irq = spin_lock_irqsave(&buddy_lock);
         struct Page * page = __alloc_pages(zone, order, attr);
+        spin_unlock_irqrestore(&buddy_lock, irq);
 
         if(page) return page;
     }
@@ -435,16 +442,24 @@ struct Page *alloc_pages(int zone_selector, unsigned int number, unsigned long P
 int free_pages(struct Page *page, int number){
     unsigned long order = get_order(number);
 
-    if(order >= MAX_ORDER) return 0;
+    if(!page || number <= 0 || order >= MAX_ORDER) return 0;
 
+    unsigned long irq = spin_lock_irqsave(&buddy_lock);
+    if(!page->ZoneStruct || page->reserved || page->RefCount != 1 ||
+       page->allocation_order != (int)order){
+        spin_unlock_irqrestore(&buddy_lock, irq);
+        return 0;
+    }
     __free_pages(page, order);
+    spin_unlock_irqrestore(&buddy_lock, irq);
 
     return 1;
 }
 
 /* AllocPage keeps its historical meaning: number of contiguous 2 MiB blocks. */
 struct Page *AllocPage(int ZoneSelector, int number, unsigned long PageAttr){
-    return alloc_pages(ZoneSelector, number << 9, PageAttr);
+    if(number <= 0 || number > (1 << (MAX_ORDER - 1)) / 512) return NULL;
+    return alloc_pages(ZoneSelector, number * 512, PageAttr);
 }
 
 struct Page *AllocPage4K(int ZoneSelector, int number, unsigned long PageAttr){
@@ -452,7 +467,8 @@ struct Page *AllocPage4K(int ZoneSelector, int number, unsigned long PageAttr){
 }
 
 int FreePage(struct Page *page, int number){
-    return free_pages(page, number << 9);
+    if(number <= 0 || number > (1 << (MAX_ORDER - 1)) / 512) return 0;
+    return free_pages(page, number * 512);
 }
 
 int FreePage4K(struct Page *page, int number){
@@ -460,7 +476,9 @@ int FreePage4K(struct Page *page, int number){
 }
 
 
-void* kmalloc(unsigned long size, unsigned long flags){
+static unsigned int kfree_locked(void *ptr);
+
+static void *kmalloc_locked(unsigned long size, unsigned long flags){
     if(size > 0x100000){ ColorPrintfk(RED, BLACK, "Size > 0x100000 No Slap For It\n"); return NULL;}
 
     for(int i = 0; i < KMALLOC_SLAB_SIZE; i++){
@@ -483,7 +501,7 @@ void* kmalloc(unsigned long size, unsigned long flags){
                     unsigned int StructSize = sizeof(struct Slab) + (PAGE_2M_SIZE / ksize / sizeof(unsigned long));
                     struct Slab* slab = (struct Slab*)(virtual + PAGE_2M_SIZE - StructSize);
                     slab->UsingCount    = 0;
-                    slab->FreeCount     = (PAGE_2M_SIZE - StructSize + ksize - 1) / ksize;
+                    slab->FreeCount     = (PAGE_2M_SIZE - StructSize) / ksize;
                     slab->ColorMap      = (unsigned long *)((unsigned long)slab + sizeof(struct Slab));
                     slab->ColorCount    = slab->FreeCount;
                     slab->ColorLength   = BITS_MAP_LENGTH(slab->ColorCount);
@@ -510,12 +528,14 @@ void* kmalloc(unsigned long size, unsigned long flags){
                 case 0x40000:
                 case 0x80000:
                 case 0x100000:{
-                    struct Slab* slab = (struct Slab*)kmalloc(sizeof(struct Slab), 0);
+                    struct Slab* slab = (struct Slab*)kmalloc_locked(sizeof(struct Slab), 0);
+                    if(!slab){ FreePage(page, 1); return NULL; }
                     unsigned long virtual = (unsigned long)PHY_TO_VIRT(page->PhyAddr);
                     slab->Vaddress = (void *)virtual;
                     slab->ColorCount = PAGE_2M_SIZE / ksize;
                     slab->ColorLength = BITS_MAP_LENGTH(slab->ColorCount);
-                    slab->ColorMap = (unsigned long*)(virtual);
+                    slab->ColorMap = kmalloc_locked(slab->ColorLength * sizeof(unsigned long), 0);
+                    if(!slab->ColorMap){ kfree_locked(slab); FreePage(page, 1); return NULL; }
                     slab->FreeCount = slab->ColorCount;
                     memset(slab->ColorMap, 0, slab->ColorLength * sizeof(unsigned long));
                     ListInit(&slab->list);
@@ -538,7 +558,7 @@ void* kmalloc(unsigned long size, unsigned long flags){
     ColorPrintfk(RED, BLACK, "Can`t Alloc Memory In kmalloc()\n");
     return 0;
 }
-unsigned int kfree(void *ptr){
+static unsigned int kfree_locked(void *ptr){
     unsigned long PageAddr = PAGE_2M_ALIGN_DOWN((unsigned long)ptr);
     for(int i = 0; i < KMALLOC_SLAB_SIZE; i++){
         struct SlabCache* SC = &KmallocSlabSet[i];
@@ -552,8 +572,11 @@ unsigned int kfree(void *ptr){
             };
 
             if((unsigned long)slab->Vaddress == PageAddr){
-                unsigned long offset = ((unsigned long)ptr - PageAddr) / SC->size;
-                slab->ColorMap[offset >> 6] ^= (1UL << offset % 64);
+                unsigned long displacement = (unsigned long)ptr - PageAddr;
+                unsigned long offset = displacement / SC->size;
+                if(displacement % SC->size || offset >= slab->ColorCount ||
+                   !(slab->ColorMap[offset >> 6] & (1UL << (offset % 64)))) return 0;
+                slab->ColorMap[offset >> 6] &= ~(1UL << (offset % 64));
                 slab->UsingCount--;
                 slab->FreeCount++;
                 SC->TotalFree++;
@@ -581,7 +604,8 @@ unsigned int kfree(void *ptr){
                         SC->TotalFree -= slab->FreeCount;
                         ListDelete(&slab->list);
                         FreePage(slab->page, 1);
-                        kfree(slab);
+                        kfree_locked(slab->ColorMap);
+                        kfree_locked(slab);
                         break;
                     }
                 }
@@ -594,221 +618,42 @@ unsigned int kfree(void *ptr){
     return 0;
 }
 
+void *kmalloc(unsigned long size, unsigned long flags){
+    unsigned long irq = spin_lock_irqsave(&slab_lock);
+    void *ptr = kmalloc_locked(size, flags);
+    spin_unlock_irqrestore(&slab_lock, irq);
+    return ptr;
+}
+
+unsigned int kfree(void *ptr){
+    if(!ptr) return 0;
+    unsigned long irq = spin_lock_irqsave(&slab_lock);
+    unsigned int freed = kfree_locked(ptr);
+    spin_unlock_irqrestore(&slab_lock, irq);
+    return freed;
+}
+
 static unsigned long *table_from_entry(unsigned long entry){
     return PHY_TO_VIRT(entry & PAGE_4K_MASK);
 }
 
-static unsigned long *walk_pte(unsigned long pgd, unsigned long vaddr, int create){
-    unsigned long *entry;
-    unsigned long *table;
-    unsigned long *pml4 = PHY_TO_VIRT(pgd & PAGE_4K_MASK);
-
-    entry = pml4 + GetBits(vaddr, PAGE_GDT_SHIFT, 9);
-    if(!*entry && create){
-        void *page = kmalloc(PAGE_4K_SIZE, 0);
-        if(!page) return NULL;
-        memset(page, 0, PAGE_4K_SIZE);
-        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
-    }
-    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
-    table = table_from_entry(*entry);
-
-    entry = table + GetBits(vaddr, PAGE_1G_SHIFT, 9);
-    if(!*entry && create){
-        void *page = kmalloc(PAGE_4K_SIZE, 0);
-        if(!page) return NULL;
-        memset(page, 0, PAGE_4K_SIZE);
-        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
-    }
-    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
-    table = table_from_entry(*entry);
-
-    entry = table + GetBits(vaddr, PAGE_2M_SHIFT, 9);
-    if(!*entry && create){
-        void *page = kmalloc(PAGE_4K_SIZE, 0);
-        if(!page) return NULL;
-        memset(page, 0, PAGE_4K_SIZE);
-        *entry = VIRT_TO_PHY(page) | PEA_USER_TABLE;
-    }
-    if(!*entry || (*entry & PEA_PAGE_SIZE)) return NULL;
-    table = table_from_entry(*entry);
-
-    return table + GetBits(vaddr, PAGE_4K_SHIFT, 9);
+/* The allocator owns one reference initially. VM references may also be
+ * held by a page-table entry or a resident backing object. */
+void page_get(struct Page *page){
+    unsigned long irq = spin_lock_irqsave(&buddy_lock);
+    page->RefCount++;
+    page->ZoneStruct->TotalPagesLink++;
+    spin_unlock_irqrestore(&buddy_lock, irq);
 }
 
-int MapPage4K(unsigned long pgd, unsigned long vaddr, struct Page *page,
-             unsigned long flags){
-    unsigned long *pte;
-
-    if(page == NULL || (vaddr & (PAGE_4K_SIZE - 1)) != 0 ||
-       (page->PhyAddr & (PAGE_4K_SIZE - 1)) != 0)
-        return -EINVAL;
-
-    pte = walk_pte(pgd, vaddr, 1);
-    if(pte == NULL || (*pte & PEA_PRESENT)) return -ENOMEM;
-
-    *pte = page->PhyAddr | (flags & ~PEA_PAGE_SIZE);
-    return 0;
-}
-
-static int page_fault_access_allowed(vm_area_struct *vma,
-                                     unsigned long error_code){
-    if(vma == NULL) return 0;
-
-    if(error_code & (1UL << 1)){
-        return (vma->prot & PROT_WRITE) != 0;
+void page_put(struct Page *page){
+    unsigned long irq = spin_lock_irqsave(&buddy_lock);
+    if(page->RefCount == 1) __free_pages(page, 0);
+    else{
+        page->RefCount--;
+        page->ZoneStruct->TotalPagesLink--;
     }
-
-    if(error_code & (1UL << 4)){
-        return (vma->prot & PROT_EXEC) != 0;
-    }
-
-    return (vma->prot & PROT_READ) != 0;
-}
-
-int handle_page_fault(struct LocalMemManager *mm,
-                      unsigned long address,
-                      unsigned long error_code){
-    vm_area_struct *vma;
-    struct Page *page;
-    unsigned long page_address;
-    unsigned long pte_flags;
-
-    /* Reserved-bit faults and faults on an already-present page are not
-     * demand-allocation faults.  COW will handle present write faults later. */
-    if(mm == NULL || mm->pgd == NULL ||
-       (error_code & (1UL << 3)) ||
-       (error_code & (1UL << 0)))
-        return -EFAULT;
-
-    page_address = PAGE_4K_ALIGN_DOWN(address);
-    vma = find_vma(mm, page_address);
-    if(vma == NULL || page_address < vma->start ||
-       page_address >= vma->end)
-        return -EFAULT;
-
-    if(!page_fault_access_allowed(vma, error_code))
-        return -EACCES;
-
-    /* This stage deliberately supports anonymous mappings only. */
-    if(!(vma->mmap_flags & MAP_ANONYMOUS) || vma->file != NULL)
-        return -EOPNOTSUPP;
-
-    page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
-                       PATTR(PG_PTABLE_MAPPED));
-    if(page == NULL)
-        return -ENOMEM;
-
-    memset(PHY_TO_VIRT(page->PhyAddr), 0, PAGE_4K_SIZE);
-
-    pte_flags = PEA_PRESENT | PEA_IS_USER;
-    if(vma->prot & PROT_WRITE)
-        pte_flags |= PEA_READ_WRITE;
-
-    if(MapPage4K((unsigned long)mm->pgd, page_address,
-                 page, pte_flags) != 0){
-        FreePage4K(page, 1);
-        return -ENOMEM;
-    }
-
-    FlushTLB();
-    return 0;
-}
-
-struct Page *UnmapPage4K(unsigned long pgd, unsigned long vaddr){
-    unsigned long *pte;
-    unsigned long physical;
-
-    if(vaddr & (PAGE_4K_SIZE - 1)) return NULL;
-    pte = walk_pte(pgd, vaddr, 0);
-    if(pte == NULL || !(*pte & PEA_PRESENT)) return NULL;
-
-    physical = *pte & PAGE_4K_MASK;
-    *pte = 0;
-    if((physical >> PAGE_4K_SHIFT) >= MMS.PagesCount) return NULL;
-    return MMS.PagesGroup + (physical >> PAGE_4K_SHIFT);
-}
-
-long MapUserRange4K(unsigned long pgd, unsigned long start, unsigned long size){
-    unsigned long first = PAGE_4K_ALIGN_DOWN(start);
-    unsigned long last = PAGE_4K_ALIGN_UP(start + size);
-    unsigned long vaddr;
-
-    for(vaddr = first; vaddr < last; vaddr += PAGE_4K_SIZE){
-        struct Page *page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
-                                        PATTR(PG_PTABLE_MAPPED));
-        if(page == NULL) goto fail;
-        memset(PHY_TO_VIRT(page->PhyAddr), 0, PAGE_4K_SIZE);
-        if(MapPage4K(pgd, vaddr, page, PEA_USER_PAGE) != 0){
-            FreePage4K(page, 1);
-            goto fail;
-        }
-    }
-    return 0;
-
-fail:
-    while(vaddr != first){
-        vaddr -= PAGE_4K_SIZE;
-        struct Page *page = UnmapPage4K(pgd, vaddr);
-        if(page != NULL) FreePage4K(page, 1);
-    }
-    return -ENOMEM;
-}
-
-void FreeUserPageTables(unsigned long pgd){
-    unsigned long *pml4 = PHY_TO_VIRT(pgd & PAGE_4K_MASK);
-
-    for(unsigned long pml4_index = 0; pml4_index < 256; pml4_index++){
-        unsigned long pml4e = pml4[pml4_index];
-        if(!pml4e || (pml4e & PEA_PAGE_SIZE)) continue;
-        unsigned long *pdpt = table_from_entry(pml4e);
-
-        for(unsigned long pdpt_index = 0; pdpt_index < 512; pdpt_index++){
-            unsigned long pdpte = pdpt[pdpt_index];
-            if(!pdpte || (pdpte & PEA_PAGE_SIZE)) continue;
-            unsigned long *pd = table_from_entry(pdpte);
-
-            for(unsigned long pd_index = 0; pd_index < 512; pd_index++){
-                unsigned long pde = pd[pd_index];
-                if(!pde) continue;
-                if(pde & PEA_PAGE_SIZE){
-                    struct Page *page = MMS.PagesGroup +
-                        ((pde & PAGE_2M_MASK) >> PAGE_4K_SHIFT);
-                    FreePage(page, 1);
-                    pd[pd_index] = 0;
-                    continue;
-                }
-
-                unsigned long *pt = table_from_entry(pde);
-                for(unsigned long pt_index = 0; pt_index < 512; pt_index++){
-                    if(pt[pt_index] & PEA_PRESENT){
-                        unsigned long physical = pt[pt_index] & PAGE_4K_MASK;
-                        if((physical >> PAGE_4K_SHIFT) < MMS.PagesCount)
-                            FreePage4K(MMS.PagesGroup +
-                                       (physical >> PAGE_4K_SHIFT), 1);
-                        pt[pt_index] = 0;
-                    }
-                }
-                kfree(pt);
-                pd[pd_index] = 0;
-            }
-            kfree(pd);
-            pdpt[pdpt_index] = 0;
-        }
-        kfree(pdpt);
-        pml4[pml4_index] = 0;
-    }
-}
-
-unsigned long do_brk(unsigned long start, unsigned long size){
-    unsigned long end = PAGE_4K_ALIGN_UP(start + size);
-
-    if(MapUserRange4K((unsigned long)CURRENT->lmm->pgd, start, size) != 0)
-        return (unsigned long)-ENOMEM;
-
-    CURRENT->lmm->EndBrk = end;
-    FlushTLB();
-    return end;
+    spin_unlock_irqrestore(&buddy_lock, irq);
 }
 
 void init_buddy_system(){
@@ -919,7 +764,12 @@ void InitMemory(){
     ColorPrintfk(BLUE, BLACK, "Page Num OS Have Is %D Totally\n", TotalPage);
 
     // Include Memory Gap And ROM
-    TotalMemory =  MMS.descriptor[MMS.GMDLength - 1].address + MMS.descriptor[MMS.GMDLength - 1].length;
+    TotalMemory = 0;
+    for(unsigned int i = 0; i < MMS.GMDLength; i++)
+        if(MMS.descriptor[i].type == 1){
+            unsigned long end = MMS.descriptor[i].address + MMS.descriptor[i].length;
+            if(end > TotalMemory) TotalMemory = end;
+        }
                     
     // Init BitsMap
 
@@ -942,7 +792,7 @@ void InitMemory(){
 
     MMS.ZonesGroup  = (struct Zone*)MEM_GAP_ALIGN((unsigned long)MMS.PagesGroup + MMS.PagesLength);
     MMS.ZonesCount   = 0; // Assume Here
-    MMS.ZonesLength = 5 * sizeof(struct Zone);
+    MMS.ZonesLength = MMS.GMDLength * sizeof(struct Zone);
     memset(MMS.ZonesGroup, 0x00, MMS.ZonesLength);
 
     for(unsigned int i = 0; i < MMS.GMDLength; i++){
@@ -985,6 +835,7 @@ void InitMemory(){
             p -> RefCount      = 0;
             p -> ZoneStruct    = z;
             p -> reserved      = 0;
+            p->allocation_order = -1;
             ListInit(&p->buddy_list);
         }
     }
@@ -1087,7 +938,7 @@ void InitPageTable(){
 void InitPage(struct Page *p, unsigned long flag){
     p -> Attribute |= flag;
 
-    if(!p->RefCount || (p->Attribute & PG_SHARED)){
+    if(!p->RefCount || (p->Attribute & PATTR(PG_SHARED))){
         p -> RefCount++;
         p -> ZoneStruct->TotalPagesLink++;
     }

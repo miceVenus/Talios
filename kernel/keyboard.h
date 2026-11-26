@@ -43,5 +43,8 @@ typedef struct KeyboardInBuf{
 
 void KeyboardInit();
 void AnalyzeKeyCode();
+#ifdef TALIOS_SCHED_CHECK
+void keyboard_test_tick(unsigned long ip);
+#endif
 
 #endif

@@ -32,6 +32,31 @@ TSK_SIGNAL = 0x10
 TSK_PREEMPT = 0x18
 
 
+/* Preserve the callee-saved registers on each task's own kernel stack. */
+ENTRY(switch_context)
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    pushq %rax
+    movq %rsp, (%rdx)
+    leaq .Lresume(%rip), %rax
+    movq %rax, (%rcx)
+    movq %r8, %rsp
+    pushq %r9
+    jmp __Switch_To
+.Lresume:
+    popq %rax
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    retq
+
 ENTRY(Syscall)
     sti
     subq    $0x38,  %rsp
@@ -64,14 +89,18 @@ ENTRY(Syscall)
     movq    RAX(%rsp), %rax
     leaq    system_call_table(%rip),    %rbx
 
+    cmpq    $128, %rax
+    jae     1f
     callq   *(%rbx, %rax, 8)
+    jmp     2f
+1:  callq   no_system_call
+2:
 
     movq    %rax,   RAX(%rsp)
 
 
 
 ENTRY(ret_system_call)
-    movq    %rax,   0x80(%rsp)
     popq    %r15
     popq    %r14
     popq    %r13
@@ -257,8 +286,9 @@ error_code:
 ret_from_exception:
 
 ENTRY(ret_from_intr)
-    movq    $-1,                    %rcx
-    testq   softirq_status(%rip),   %rcx
+    cli
+    callq   get_softirq_status
+    testq   %rax, %rax
     jnz     softirq_handler
     GET_CURRENT(%rbx)                            # TASK STRUCT STORED IN RBX
 

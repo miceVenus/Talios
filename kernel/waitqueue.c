@@ -7,22 +7,20 @@ void wait_queue_init(wait_queue_t * wait_queue, struct TaskStruct *tsk){
     wait_queue->tsk = tsk;
 }
 
-void sleep_on(wait_queue_t * wait_queue_head){
+/* Called with interrupts disabled and the condition lock held. */
+void sleep_on(wait_queue_t *queue, SpinLock_T *condition_lock){
     wait_queue_t wait;
     wait_queue_init(&wait, CURRENT);
-    CURRENT->state = TASK_UNINTERRUPTABLE;
-    ListForeAdd(&(wait.wait_list), &(wait_queue_head->wait_list));
+    ListForeAdd(&wait.wait_list, &queue->wait_list);
+    sched_prepare_sleep();
+    raw_spin_unlock(condition_lock);
     schedule();
+    raw_spin_lock(condition_lock);
 }
 
-void wake_up(wait_queue_t * wait_queue_head, long state){
-    wait_queue_t *wait = NULL;
-    if(ListIsEmpty(&wait_queue_head->wait_list)){
-        return;
-    }
-    wait = ContainerOf(ListNext(&wait_queue_head->wait_list), wait_queue_t, wait_list);
-    if(wait->tsk->state & state){
-        ListDelete(&wait->wait_list);
-        wakeup_process(wait->tsk);
-    }
+void wake_up(wait_queue_t *queue){
+    if(ListIsEmpty(&queue->wait_list)) return;
+    wait_queue_t *wait = ContainerOf(queue->wait_list.next, wait_queue_t, wait_list);
+    ListDelete(&wait->wait_list);
+    wakeup_process(wait->tsk);
 }

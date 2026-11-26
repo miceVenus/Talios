@@ -14,7 +14,9 @@ int read(int fd, void * buf, unsigned long count);
 
 int write(int fd, void * buf, unsigned long count);
 
-int lseek(int fd, long offset, int whence);
+long lseek(int fd, long offset, int whence);
+
+void _exit(int status) __attribute__((noreturn));
 
 int fork();
 

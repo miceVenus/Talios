@@ -20,13 +20,13 @@ int ListDelete(struct List *list);
 
 Time global_time = {0};
 
-timer_list timer_list_header;
-
-extern unsigned long jiffies;
+static timer_list timer_list_header;
+static unsigned long jiffies;
+static SpinLock_T timer_lock;
 
 void get_cmos_time(Time * time){
 
-    cli();
+    unsigned long irq = irq_save();
 
     do{
         time->second = BCD_TO_BIN(CMOS_READ(0x00));
@@ -38,7 +38,7 @@ void get_cmos_time(Time * time){
         time->year = BCD_TO_BIN(CMOS_READ(0x09)) + BCD_TO_BIN(CMOS_READ(0x32)) * 100;
     }while (time->second != BCD_TO_BIN(CMOS_READ(0x00)));
 
-    sti();
+    irq_restore(irq);
 }
 
 
@@ -51,35 +51,45 @@ void init_timer(timer_list *timer, void (*func)(void *data), void *data, unsigne
 }
 
 void add_timer(timer_list *timer){
-
-    if(ListIsEmpty(&timer_list_header.list)){
-        ListBackAdd(&timer_list_header.list, &timer->list);
-        return;
-    }
-
-    timer_list *tmp = ContainerOf(ListNext(&timer_list_header.list), timer_list, list);
-
-    // here timer_list_header `s expire num is infinite so there is no end problem
-    while(tmp->expire_jiffies < timer->expire_jiffies){
-        tmp = ContainerOf(ListNext(&tmp->list), timer_list, list);
-    }
-
-    ListForeAdd(&timer->list, &tmp->list);
+    unsigned long irq = spin_lock_irqsave(&timer_lock);
+    struct List *p = timer_list_header.list.next;
+    while(p != &timer_list_header.list && ContainerOf(p, timer_list, list)->expire_jiffies < timer->expire_jiffies)
+        p = p->next;
+    ListForeAdd(&timer->list, p);
+    spin_unlock_irqrestore(&timer_lock, irq);
 }
 void delete_timer(timer_list *timer){
+    unsigned long irq = spin_lock_irqsave(&timer_lock);
     ListDelete(&timer->list);
+    spin_unlock_irqrestore(&timer_lock, irq);
 }
 
-// This is softirq
+static timer_list *first_expired(void){
+    if(ListIsEmpty(&timer_list_header.list)) return NULL;
+    timer_list *first = ContainerOf(timer_list_header.list.next, timer_list, list);
+    return first->expire_jiffies <= jiffies ? first : NULL;
+}
+
+void timer_tick(void){
+    unsigned long irq = spin_lock_irqsave(&timer_lock);
+    jiffies++;
+    if(first_expired()) add_softirq_status(TIME_SIRQ);
+    spin_unlock_irqrestore(&timer_lock, irq);
+}
 
 void do_time(void *data){
-    timer_list *tmp = ContainerOf(ListNext(&timer_list_header.list), timer_list, list);
-    while(tmp->expire_jiffies <= jiffies && !ListIsEmpty(&timer_list_header.list)){
-        delete_timer(tmp);
-        tmp->func(tmp->data);
-        tmp = ContainerOf(ListNext(&timer_list_header.list), timer_list, list);
-        // kfree(tmp); // should be removed
+    (void)data;
+    unsigned long irq = spin_lock_irqsave(&timer_lock);
+    timer_list *timer;
+    while((timer = first_expired())){
+        void (*func)(void *) = timer->func;
+        void *arg = timer->data;
+        ListDelete(&timer->list);
+        spin_unlock_irqrestore(&timer_lock, irq);
+        func(arg);
+        irq = spin_lock_irqsave(&timer_lock);
     }
+    spin_unlock_irqrestore(&timer_lock, irq);
 }
 
 void test_timer(void *datd){
@@ -91,8 +101,8 @@ void time_init(){
     init_timer(&timer_list_header, NULL, NULL, -1UL);
     register_softirq(0, &do_time, NULL);
 
-    timer_list *tmp = (timer_list*)kmalloc(sizeof(timer_list), 0);
-    init_timer(tmp, &test_timer, NULL, 500);
-    add_timer(tmp);
+    static timer_list boot_timer;
+    init_timer(&boot_timer, &test_timer, NULL, 500);
+    add_timer(&boot_timer);
 }
 

@@ -102,9 +102,12 @@ request_queue disk_request_queue;
 static unsigned int disk_flags = 0;
 
 static HwInterruptT disk_irq_controller;
+static SpinLock_T request_lock;
 
 block_buffer_node * make_request(long cmd, unsigned long blocks, long count, unsigned char *buffer){
    block_buffer_node * node =  (block_buffer_node*)kmalloc(sizeof(block_buffer_node), 0);
+   if(!node) return NULL;
+   node->success = 1;
    wait_queue_init(&node->wait_queue, NULL);
    node->wait_queue.tsk = CURRENT;
    
@@ -122,6 +125,7 @@ block_buffer_node * make_request(long cmd, unsigned long blocks, long count, uns
         case ATA_GET_DISK_ID_CMD:
             node->cmd = ATA_GET_DISK_ID_CMD;
             node->end_handler = get_disk_id_handler;
+            break;
         default:
             node->cmd = cmd;
             node->end_handler = other_handler;
@@ -134,7 +138,7 @@ block_buffer_node * make_request(long cmd, unsigned long blocks, long count, uns
    return node;
 }
 
-long cmd_out(){
+static void cmd_out(void){
     wait_queue_t *tmp = ContainerOf(ListNext(&disk_request_queue.queue_list.wait_list), wait_queue_t, wait_list);
     block_buffer_node * node = ContainerOf(tmp, block_buffer_node, wait_queue);
     disk_request_queue.in_using = node;
@@ -226,41 +230,32 @@ void submit(block_buffer_node * node){
         cmd_out();
 }
 
-void wait_for_finish(){
-    // In CFS process preempted because of IO would discard its jiffies  
-    task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies = 0;
-    // ColorPrintfk(BLUE, BLACK, "%X\n", disk_request_queue.in_using);
-    if(CURRENT->state == TASK_UNINTERRUPTABLE){
-        sti();
-        schedule();
-    }else{
-        sti();
-    }
+static int submit_and_wait(block_buffer_node *node){
+    if(!node) return 0;
+    unsigned long irq = spin_lock_irqsave(&request_lock);
+    sched_prepare_sleep();
+    submit(node);
+    raw_spin_unlock(&request_lock);
+    schedule();
+    irq_restore(irq);
+    int success = node->success;
+    kfree(node);
+    return success;
 }
 
 long ide_close(){
-
+    return 1;
 }
 
 long ide_open(){
-
+    return 1;
 }
 
 long ide_ioctl(long cmd, long arg){
-
-    switch(cmd){
-    case ATA_GET_DISK_ID_CMD:
-        OUT8b(SECONDARY_CHANNEL_CMD_STATUS_CMD, cmd);
-        disk_device_info * device_info = (disk_device_info *)kmalloc(sizeof(disk_device_info), 0); 
-        block_buffer_node * node = make_request(cmd, 0, 0, (unsigned char *)device_info);
-        submit(node);
-        wait_for_finish();
-        return 1;
-    
-    default:
-        ColorPrintfk(RED, BLACK, "UnKown CMD %x In ide_ioctl()", cmd);
-        break;
-    }
+    if(cmd != ATA_GET_DISK_ID_CMD) return 0;
+    disk_device_info info;
+    unsigned char *dst = arg ? (unsigned char *)arg : (unsigned char *)&info;
+    return submit_and_wait(make_request(cmd, 0, 0, dst));
 }
 
 long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buffer){
@@ -269,36 +264,25 @@ long ide_transfer(long cmd, unsigned long blocks, long count, unsigned char *buf
     if(cmd != ATA_READ_CMD && cmd != ATA_WRITE_CMD) return 0;
 
     node = make_request(cmd, blocks, count, buffer);
-    cli();
-    CURRENT->state = TASK_UNINTERRUPTABLE;
-    submit(node);
-    wait_for_finish();
-    return 1;
+    return submit_and_wait(node);
 }
 
 void end_request(struct block_buffer_node *node){
-    if(node == NULL) ColorPrintfk(RED, BLACK, "bad end request!!!\n");
+    if(!node) return;
 
-    // kfree(disk_request_queue.in_using);
     disk_request_queue.in_using = NULL;
 
     disk_flags = 0;
     if(disk_request_queue.block_request_count != 0)
         cmd_out();
 
-    node->wait_queue.tsk->state = TASK_RUNING;
-    scheduler * ts = &task_schedulers[CURRENT->cpu_id];
-
-    insert_task_queue(node->wait_queue.tsk);
-    // task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies = 0;
-    CURRENT->flags |= NEED_SCHEDULE;
-
-    kfree(node);
+    wakeup_process(node->wait_queue.tsk);
 }
 
 void get_disk_id_handler(unsigned long nr, unsigned long arg){
     block_buffer_node * node = ((request_queue*)arg)->in_using;
     if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
+        node->success = 0;
         ColorPrintfk(RED, BLACK, "Get Disk Id Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
     }else
         port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
@@ -307,30 +291,30 @@ void get_disk_id_handler(unsigned long nr, unsigned long arg){
 }
 
 void read_handler(unsigned long nr, unsigned long arg){
-    block_buffer_node *node = ((request_queue*)arg)->in_using;
-
-    if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
-        ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
-    }else if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_REQ){
-        port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
-    }else{
-        ColorPrintfk(RED, BLACK, "Read Handler Error : No Data To Be Read");
+    block_buffer_node *node = ((request_queue *)arg)->in_using;
+    unsigned char status = IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD);
+    if((status & DISK_STATUS_ERROR) || !(status & DISK_STATUS_REQ)){
+        node->success = 0;
+        end_request(node);
+        return;
     }
-
-    node->count--;
+    port_insw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
     node->buffer += 512;
-    if(node->count == 0) end_request(node);
+    if(--node->count == 0) end_request(node);
 }
 
 void write_handler(unsigned long nr, unsigned long arg){
-    block_buffer_node *node = ((request_queue*)arg)->in_using;
-    if(IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD) & DISK_STATUS_ERROR){
-        ColorPrintfk(RED, BLACK, "Read Handler Error : %x", IN8b(SECONDARY_CHANNEL_CMD_ERROR_STATUS));
+    block_buffer_node *node = ((request_queue *)arg)->in_using;
+    unsigned char status = IN8b(SECONDARY_CHANNEL_CMD_STATUS_CMD);
+    if(status & DISK_STATUS_ERROR){
+        node->success = 0;
+        end_request(node);
+    }else if(--node->count == 0){
+        end_request(node);
+    }else{
+        node->buffer += 512;
+        port_outsw(node->buffer, SECONDARY_CHANNEL_CMD_DATA, 256);
     }
-
-    node->count--;
-    node->buffer += 512;
-    if(node->count == 0) end_request(node);
 }
 
 void other_handler(unsigned long nr, unsigned long arg){
@@ -338,8 +322,10 @@ void other_handler(unsigned long nr, unsigned long arg){
 }
 
 void disk_irq_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
+    unsigned long irq = spin_lock_irqsave(&request_lock);
     block_buffer_node *node = ((request_queue*)arg)->in_using;
-    node->end_handler(nr, arg);
+    if(node) node->end_handler(nr, arg);
+    spin_unlock_irqrestore(&request_lock, irq);
 }
 
 void disk_init(){
@@ -363,8 +349,7 @@ void disk_init(){
     entry.DelivStatus   = DELIV_S_IDLE;
     entry.reserverd     = 0;
     entry.DestField.physical.reserverd1 = 0;
-    entry.DestField.physical.physic_dst = 0;
-    entry.DestField.physical.reserverd2 = 0;
+    entry.DestField.physical.physic_dst = get_lapic_id();
 
     RegisterIrq(0x2f, &entry, disk_irq_handler, (unsigned long)(&disk_request_queue), &disk_irq_controller, "disk1");
 

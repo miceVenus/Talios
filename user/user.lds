@@ -9,7 +9,7 @@ SECTIONS
 
     .text : {
         _text = .;
-        build/init_user.o(main)
+        KEEP(*(.text.entry))
         *(.text*)
         _etext = .;
     }

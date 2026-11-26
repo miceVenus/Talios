@@ -2,7 +2,7 @@
 #include "gate.h"
 #include "printk.h"
 #include "memory.h"
-#include "vma.h"
+#include "mmap.h"
 #include "schedule.h"
 #include "smp.h"
 #include "fat32.h"
@@ -23,8 +23,11 @@ struct  TaskStruct * GetCurrent();
 struct  List* ListNext(struct List *list);
 void    ListForeAdd(struct List *new, struct List *list);
 
-long global_pid;
 struct LocalMemManager InitLmm = {0};
+/* FXSAVE64 layout: default x87 control word, empty tag word, default MXCSR. */
+static const unsigned char initial_fxstate[512] __attribute__((aligned(16))) = {
+    [0] = 0x7f, [1] = 0x03, [24] = 0x80, [25] = 0x1f
+};
 struct ThreadStruct InitThread;
 
 union TaskUnion InitTaskUnion __attribute__((__section__ (".data.init_task"))) = {INIT_TASK(InitTaskUnion.task)};
@@ -40,8 +43,6 @@ struct ThreadStruct InitThread = {
 };
 
 struct TssStruct InitTss[NR_CPUS] = {[0 ... NR_CPUS - 1] = INIT_TSS};
-struct TaskStruct* InitTask[NR_CPUS] = {&InitTaskUnion.task, 0};
-struct ThreadStruct* InitThreads[NR_CPUS] = {&InitThread, 0};
 union TaskUnion* InitTaskUnions[NR_CPUS] = {&InitTaskUnion, 0};
 
 extern struct GlobalMemManager MMS;
@@ -71,39 +72,24 @@ __asm__ (
             "   popq    %rax       \n\t"
             "   addq    $0x38,  %rsp       \n\t"
             "   movq    %rdx,   %rdi       \n\t"
+            "   sti                 \n\t"
             "   callq   *%rbx       \n\t"
             "   movq    %rax,   %rdi       \n\t"
             "   callq   DoExit      \n\t");
 
-long copy_flags(CloneFlag, tsk);
-long copy_mm(CloneFlag, tsk);
-long copy_files(CloneFlag, tsk);
-long copy_thread(CloneFlag, tsk, StackStart, StackSize, regs); 
-void wakeup_process(tsk);
-void exit_mm(tsk);
-void exit_files(tsk);
-void exit_thread(tsk);
-
-
-TaskStruct * get_task(long pid){
-    TaskStruct * task_h = &(InitTaskUnions[CURRENT->cpu_id]->task);
-
-    for(TaskStruct * task = task_h; task->next != task_h; task = task->next){
-        if(task->pid == pid) return task;
+static void exit_files(TaskStruct *task){
+    for(int i = 0; i < MAX_HANDLE_PER_TASK; i++){
+        if(task->handle_array[i]){
+            file_put(task->handle_array[i]);
+            task->handle_array[i] = NULL;
+        }
     }
-    return NULL;
 }
 
 void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     long cpu_id = smp_cpu_id();
-    int color   = cpu_id ? WHITE : BLUE;
 
-    InitTss[cpu_id].rsp0 = next -> thread -> rsp0;
-    SetTss( (unsigned int*)&InitTss[cpu_id], InitTss[cpu_id].rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
-            InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
-            InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
-            InitTss[cpu_id].ist7);
-    
+    InitTss[cpu_id].rsp0 = next->thread->rsp0;
     wrmsr(MSR_IA32_SYSENTER_ESP, next->thread->rsp0);
 
     __asm__ volatile("movq %%fs,    %0" :"=r"(prev->thread->fs));
@@ -112,10 +98,9 @@ void __Switch_To(struct TaskStruct *prev, struct TaskStruct *next){
     __asm__ volatile("movq %0,      %%fs":: "r"(next->thread->fs));
     __asm__ volatile("movq %0,      %%gs":: "r"(next->thread->gs));
 
-    prev->preempt_count--;
-    // ColorPrintfk(color, BLACK, "prev process rsp0 : %p\n", prev->thread->rsp0);
-    // ColorPrintfk(color, BLACK, "next process rsp0 : %p\n", next->thread->rsp0);
-    // bochs_bp();
+    __asm__ volatile("fxsave64 %0" : "=m"(prev->fxstate));
+    __asm__ volatile("fxrstor64 %0" :: "m"(next->fxstate));
+    sched_finish_switch(prev);
 }
 
 void UserLevelFunc(){
@@ -130,7 +115,9 @@ void make_keyboard_file(){
 
     dir_entry * dentry = path_walk(string, 0);
 
-    if(!dentry){ColorPrintfk(RED, BLACK, "error in create keyboardfile which located in %s\n", string);}
+    if(!dentry) return;
+    if(dentry->dir_node->attribute & FS_ATTR_DEVICE) return;
+    dentry->dir_node->attribute |= FS_ATTR_DEVICE;
 
     ((FAT32_inode_info *)dentry->dir_node->private_index_info)->first_cluster |= 0xf0000000;
     dentry->dir_node->sb->sb_ops->write_inode(dentry->dir_node);
@@ -139,45 +126,44 @@ void make_keyboard_file(){
 unsigned long init(unsigned long arg){
     ColorPrintfk(BLUE, BLACK, "Init Process Is Runing .args %D\n", arg);
 
-    struct PtRegs* regs;
     DISK1_FAT32_FS_INIT();
     make_keyboard_file();
 
-    CURRENT->thread->rip = (unsigned long)ret_system_call;
-    CURRENT->thread->rsp = (unsigned long)CURRENT + STACK_SIZE - sizeof(struct PtRegs);
-    CURRENT->flags = 0;
-    CURRENT->thread->gs = USER_DS;
-    CURRENT->thread->fs = USER_DS;
-    CURRENT->flags      &= ~PF_KTHREAD;
-
-    regs = (struct PtRegs*)CURRENT->thread->rsp;
-
-    __asm__ volatile(   "movq   %1, %%rsp       \n\t"
-                        "pushq  %2              \n\t"
-                        "jmp    do_execve        \n\t"
-                    ::"D"(regs), "r"(CURRENT->thread->rsp), "m"(CURRENT->thread->rip), "S"("/init.bin"));
-    return 1;
+    /* exec may sleep or migrate. The saved scheduler continuation belongs
+     * to switch_context; keep the first user register frame on our stack. */
+    struct PtRegs regs = {0};
+    long rc = do_execve(&regs, "/init.bin");
+    if(rc < 0){
+        ColorPrintfk(RED, BLACK, "failed to start /init.bin (%D)\n", rc);
+        return rc;
+    }
+    __asm__ volatile("movw %w1, %%fs\n\tmovw %w1, %%gs\n\t"
+                     "movq %0, %%rsp\n\tjmp ret_system_call"
+                     :: "r"(&regs), "r"((unsigned short)USER_DS) : "memory");
+    __builtin_unreachable();
 }
 
-file * open_exec_file(char *path){
+static file *open_exec_file(char *path){
     dir_entry * dentry = path_walk(path, 0);
 
     if(dentry == NULL) {
         ColorPrintfk(BLUE, BLACK, "Can`t Find file %s", path);
-        return -ENOENT;
+        return (file *)(long)-ENOENT;
     }
 
     if(dentry->dir_node->attribute == FS_ATTR_DIR){
         ColorPrintfk(BLUE, BLACK, "This File Is A Dir%s", path);
-        return -EISDIR;
+        return (file *)(long)-EISDIR;
     }
 
 
     ColorPrintfk(BLUE, BLACK, "entry name : %s, entry size : %d\n", dentry->name, dentry->dir_node->file_size);
 
+    if(dentry->dir_node->attribute != FS_ATTR_FILE) return (file *)(long)-EACCES;
     file * filp     = (file *) kmalloc(sizeof(file), 0);
-    if(filp == NULL) return -ENOMEM;
+    if(filp == NULL) return (file *)(long)-ENOMEM;
     memset(filp, 0, sizeof(file));
+    filp->refs      = 1;
     filp->dentry    = dentry;
     filp->f_ops     = dentry->dir_node->f_ops;
     filp->mode      = 0;
@@ -186,83 +172,58 @@ file * open_exec_file(char *path){
     return filp;
 }
 
+static void complete_vfork(TaskStruct *task){
+    if(task->vfork_parent){
+        wakeup_process(task->vfork_parent);
+        task->vfork_parent = NULL;
+    }
+}
+
 unsigned long do_execve(struct PtRegs* regs, char *name){
 
-    unsigned long code_start_addr   = 0x800000;
-    unsigned long stack_start_addr  = 0xa00000;
-    unsigned long brk_start_addr    = 0xc00000;
-    file *filp              = NULL;
-    long retval;
-
-    long pos = 0;
-
-    regs->rdx   = code_start_addr;          // sysexit RIP
-    regs->rcx   = stack_start_addr;         // sysexit RSP
-    regs->rax   = 1;
-    regs->r10   = code_start_addr;          // sysexit RIP
-    regs->r11   = stack_start_addr;         // sysexit RSP
-    regs->es    = USER_DS;
-    regs->ds    = USER_DS;
-    regs->cs    = USER_CS;
-    regs->ss    = USER_DS;
-
-    ColorPrintfk(BLUE, BLACK, "execve is running\n");
-
-    // sub process should have an independent vaddr to run
-    // but process gen by vfork would not have this feature
-
-    if(CURRENT->flags & PF_VFORK){
-
-        CURRENT->lmm = (struct LocalMemManager * )kmalloc(sizeof(struct LocalMemManager), 0);
-        if(CURRENT->lmm == NULL) return (unsigned long)-ENOMEM;
-        memset(CURRENT->lmm, 0 ,sizeof(struct LocalMemManager));
-        lmm_init(CURRENT->lmm);
-
-        CURRENT->lmm->pgd = (pml4t_t *)VIRT_TO_PHY(kmalloc(PAGE_4K_SIZE, 0));
-        if(CURRENT->lmm->pgd == NULL){
-            kfree(CURRENT->lmm);
-            CURRENT->lmm = NULL;
-            return (unsigned long)-ENOMEM;
-        }
-
-        // copy entries which map the addr above 0xffff800000000000(kernel space)
-        memcopy(PHY_TO_VIRT(InitTaskUnions[CURRENT->cpu_id]->task.lmm->pgd) + 256, PHY_TO_VIRT(CURRENT->lmm->pgd) + 256, PAGE_4K_SIZE >> 1);
-
-        memset(PHY_TO_VIRT(CURRENT->lmm->pgd), 0, PAGE_4K_SIZE / 2);
+    const unsigned long base = 0x800000, stack = 0xa00000;
+    file *filp = open_exec_file(name);
+    if((unsigned long)filp >= (unsigned long)-4095) return (long)filp;
+    unsigned long size = filp->dentry->dir_node->file_size;
+    if(!size || size > stack - base - PAGE_4K_SIZE){
+        file_put(filp);
+        return -ENOEXEC;
     }
 
-    if(MapUserRange4K((unsigned long)CURRENT->lmm->pgd, code_start_addr,
-                      stack_start_addr - code_start_addr) != 0){
-        FreeUserPageTables((unsigned long)CURRENT->lmm->pgd);
-        kfree(PHY_TO_VIRT((unsigned long)CURRENT->lmm->pgd));
-        kfree(CURRENT->lmm);
-        CURRENT->lmm = NULL;
-        return (unsigned long)-ENOMEM;
-    }
+    struct LocalMemManager *mm = mm_create();
+    if(!mm){ file_put(filp); return -ENOMEM; }
+    unsigned long end = base + PAGE_4K_ALIGN_UP(size);
+    /* The flat image combines instructions and initialized data. The rest
+     * of its historical window supplies demand-zero BSS and the user stack. */
+    long rc = vm_map(mm, filp, base, size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                     MAP_FIXED | MAP_PRIVATE, 0);
+    file_put(filp);
+    if(rc >= 0)
+        rc = vm_map(mm, NULL, end, stack - end, PROT_READ | PROT_WRITE,
+                    MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, 0);
+    if(rc < 0){ mm_put(mm); return rc; }
 
-    SetCr3(CURRENT->lmm->pgd);
-
-    if(!(CURRENT->flags & PF_KTHREAD))
+    mm->StartCode = base;
+    mm->EndCode = base + size;
+    mm->StartStack = stack;
+    mm->StartBrk = mm->EndBrk = 0xc00000;
+    struct LocalMemManager *old = CURRENT->lmm;
+    unsigned long irq = irq_save();
+    CURRENT->lmm = mm;
+    CURRENT->flags &= ~(PF_VFORK | PF_KTHREAD);
     CURRENT->AddrLimit = TASK_SIZE;
+    vm_switch_root(CURRENT->cpu_id, (unsigned long)mm->pgd);
+    __asm__ volatile("fxrstor64 %0" :: "m"(initial_fxstate));
+    complete_vfork(CURRENT);
+    irq_restore(irq);
+    mm_put(old);
 
-    CURRENT->lmm->StartCode     = code_start_addr;
-    CURRENT->lmm->StartStack    = stack_start_addr;
-    CURRENT->lmm->StartBrk      = brk_start_addr;
-    CURRENT->lmm->EndBrk        = brk_start_addr;
-
-    exit_files(CURRENT);
-
-    CURRENT->flags &= ~PF_VFORK;
-
-    filp = open_exec_file(name);
-
-    if((unsigned long)filp > -0x1000UL)
-        return (unsigned long)filp;
-
-    memset((void *)code_start_addr, 0, stack_start_addr - code_start_addr);
-    retval = filp->f_ops->read(filp, (void *)code_start_addr, filp->dentry->dir_node->file_size, &pos);
-
-    return retval;
+    regs->rdx = regs->r10 = base;
+    regs->rcx = regs->r11 = stack;
+    regs->rax = 0;
+    regs->es = regs->ds = regs->ss = USER_DS;
+    regs->cs = USER_CS;
+    return 0;
 }
 
 unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long args, unsigned long flag){
@@ -284,137 +245,7 @@ unsigned long KernelThread(unsigned long (*Func)(unsigned long), unsigned long a
     return do_fork(&regs, flag | CLONE_VM, 0, 0);
 }
 
-void wakeup_process(TaskStruct * task){
-    task->state = TASK_RUNING;
-    insert_task_queue(task);
-    CURRENT->flags |= NEED_SCHEDULE;
-}
-
-inline long copy_flags(unsigned long flags, TaskStruct * task){
-    if(flags & CLONE_VM) task->flags |= PF_VFORK;
-    return 0;
-}
-
-inline long copy_files(unsigned long flags, TaskStruct * task){
-    int error   = 0;
-
-    if(flags & CLONE_FS)
-        goto out;
-
-    for(int i = 0; i < MAX_HANDLE_PER_TASK; i++){
-        if(CURRENT->handle_array[i] != NULL){
-            task->handle_array[i] = (file *)kmalloc(sizeof(file), 0);
-            if(task->handle_array[i] == NULL){
-                error = 1;
-                break;
-            }
-            memcopy(CURRENT->handle_array[i], task->handle_array[i] , sizeof(file));
-        }
-    }
-
-    out:
-        return error;
-}
-
-inline void exit_files(TaskStruct * task){
-    if(task->flags & PF_VFORK); // do nothing
-    else
-        for(int i = 0; i < MAX_HANDLE_PER_TASK; i++){
-            if(task->handle_array[i] != NULL) kfree(task->handle_array[i]);
-        }
-    
-    memset(task->handle_array, 0 , sizeof(file *) * MAX_HANDLE_PER_TASK);
-}
-
-
-static long copy_user_range(unsigned long pgd, unsigned long start,
-                            unsigned long end){
-    for(unsigned long vaddr = PAGE_4K_ALIGN_DOWN(start);
-        vaddr < PAGE_4K_ALIGN_UP(end); vaddr += PAGE_4K_SIZE){
-        struct Page *page = AllocPage4K(ZONE_NORMAL_INDEX, 1,
-                                        PATTR(PG_PTABLE_MAPPED));
-        if(page == NULL) return -ENOMEM;
-        if(MapPage4K(pgd, vaddr, page, PEA_USER_PAGE) != 0){
-            FreePage4K(page, 1);
-            return -ENOMEM;
-        }
-        memcopy((void *)vaddr, PHY_TO_VIRT(page->PhyAddr), PAGE_4K_SIZE);
-    }
-    return 0;
-}
-
-inline long copy_mm(unsigned long flags, TaskStruct * task){
-    unsigned long code_start_addr = 0x800000;
-    unsigned long stack_start_addr = 0xa00000;
-    struct LocalMemManager *t_mm;
-
-    if(flags & CLONE_VM){
-        task->lmm = CURRENT->lmm;
-        return 0;
-    }
-
-    /* The task initially inherits CURRENT->lmm from the TaskStruct copy.
-     * Do not let an allocation failure make the fork cleanup free the
-     * parent's address space. */
-    task->lmm = NULL;
-
-    t_mm = (struct LocalMemManager *)kmalloc(sizeof(struct LocalMemManager), 0);
-    if(t_mm == NULL) return -ENOMEM;
-    memcopy(CURRENT->lmm, t_mm, sizeof(struct LocalMemManager));
-    lmm_init(t_mm);
-
-    if(vma_clone_all(CURRENT->lmm, t_mm) != 0){
-        kfree(t_mm);
-        return -ENOMEM;
-    }
-
-    t_mm->pgd = (pml4t_t *)VIRT_TO_PHY(kmalloc(PAGE_4K_SIZE, 0));
-    if(t_mm->pgd == NULL){
-        vma_destroy_all(t_mm);
-        kfree(t_mm);
-        return -ENOMEM;
-    }
-
-    memcopy(PHY_TO_VIRT(InitTaskUnions[CURRENT->cpu_id]->task.lmm->pgd) + 256,
-            PHY_TO_VIRT(t_mm->pgd) + 256, PAGE_4K_SIZE >> 1);
-    memset(PHY_TO_VIRT(t_mm->pgd), 0, PAGE_4K_SIZE / 2);
-
-    if(copy_user_range((unsigned long)t_mm->pgd, code_start_addr,
-                       stack_start_addr) != 0)
-        goto fail;
-
-    if(CURRENT->lmm->EndBrk > CURRENT->lmm->StartBrk &&
-       copy_user_range((unsigned long)t_mm->pgd,
-                       CURRENT->lmm->StartBrk, CURRENT->lmm->EndBrk) != 0)
-        goto fail;
-
-    task->lmm = t_mm;
-    return 0;
-
-fail:
-    FreeUserPageTables((unsigned long)t_mm->pgd);
-    vma_destroy_all(t_mm);
-    kfree(PHY_TO_VIRT((unsigned long)t_mm->pgd));
-    kfree(t_mm);
-    return -ENOMEM;
-}
-
-inline void exit_mm(TaskStruct * task){
-    if(task->flags & PF_VFORK) return;
-
-    if(task->lmm != NULL && task->lmm->pgd != NULL){
-        FreeUserPageTables((unsigned long)task->lmm->pgd);
-    }
-    if(task->lmm != NULL){
-        vma_destroy_all(task->lmm);
-        if(task->lmm->pgd != NULL)
-            kfree(PHY_TO_VIRT((unsigned long)task->lmm->pgd));
-        kfree(task->lmm);
-    }
-}
-
-
-inline long copy_thread(unsigned long flags, TaskStruct * task, unsigned long stack_start, unsigned long stack_size, struct PtRegs* regs){
+static void copy_thread(TaskStruct *task, unsigned long stack_start, struct PtRegs *regs){
     struct ThreadStruct *thd = NULL;
     struct PtRegs *childregs = NULL;
 
@@ -440,79 +271,58 @@ inline long copy_thread(unsigned long flags, TaskStruct * task, unsigned long st
         thd->rip = (unsigned long)ret_system_call;
     }
 
-    return 0;
 }
 
-inline void exit_thread(TaskStruct * task){
-
-}
-
-// Uncomplete Function
-unsigned long do_fork(struct PtRegs * regs, unsigned long CloneFlag, unsigned long StackStart, unsigned long StackSize){
-
-    int retval = 0;
-    TaskStruct * current = CURRENT;
-
-    TaskStruct * tsk = (struct TaskStruct *)kmalloc(sizeof(TaskStruct), 0);
-    if(tsk == 0){
-        retval = -EAGAIN;
-        goto alloc_copy_fail;
+unsigned long do_fork(struct PtRegs *regs, unsigned long flags, unsigned long stack_start, unsigned long stack_size){
+    (void)stack_size;
+    TaskStruct *parent = CURRENT;
+    TaskStruct *child = kmalloc(STACK_SIZE, 0);
+    if(!child) return -ENOMEM;
+    memset(child, 0, sizeof(*child));
+    spin_lock_init(&child->lock);
+    child->flags = parent->flags;
+    child->lmm = parent->lmm;
+    child->AddrLimit = parent->AddrLimit;
+    memcopy(parent->handle_array, child->handle_array, sizeof(child->handle_array));
+    ListInit(&child->list);
+    if(flags & CLONE_VM){
+        if(child->lmm != &InitLmm){
+            vm_lock();
+            child->lmm->users++;
+            vm_unlock();
+        }
+        child->flags |= PF_VFORK;
+    }else{
+        child->lmm = mm_fork(parent->lmm);
+        if(!child->lmm){ kfree(child); return -ENOMEM; }
+        child->flags &= ~PF_VFORK;
     }
-    memset(tsk, 0, sizeof(struct TaskStruct));
-    memcopy(current, tsk, sizeof(TaskStruct));
-    ListInit(&tsk->list);
-    // ListForeAdd(&(current->list), &tsk->list);
-    tsk->next = current->next;
-    current->next = tsk;
-    tsk->parent = current;
-    tsk->pid = global_pid++;
-    tsk->priority = 2;
-    tsk->cpu_id = smp_cpu_id();
-    tsk->state = TASK_UNINTERRUPTABLE;
-
-    retval = -ENOMEM;
-
-    if(copy_flags(CloneFlag, tsk))  goto copy_flags_fail;
-    if(copy_mm(CloneFlag, tsk))     goto copy_mm_fail;
-    if(copy_files(CloneFlag, tsk))  goto copy_files_fail;
-    if(copy_thread(CloneFlag, tsk, StackStart, StackSize, regs)) 
-    goto copy_thread_fail;
-
-    retval = tsk->pid;
-    wakeup_process(tsk);
-
-    fork_ok:
-        return retval;
-    copy_mm_fail:
-        exit_mm(tsk);
-    copy_files_fail:
-        exit_files(tsk);
-    copy_thread_fail:
-        exit_thread(tsk);
-    copy_flags_fail:
-    alloc_copy_fail:
-        kfree(tsk);
-        return retval;
-
-
-
-    tsk->thread = (struct ThreadStruct*)(tsk + 1);
-    memcopy(regs, (void *)((unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs)), sizeof(struct PtRegs));
-
-    tsk->thread->rsp    = (unsigned long)tsk + STACK_SIZE - sizeof(struct PtRegs);
-    tsk->thread->rip    = regs->rip;
-    tsk->thread->rsp0   = (unsigned long)tsk + STACK_SIZE;
-
-    if(!(tsk->flags & PF_KTHREAD))
-        tsk->thread->rip = regs->rip = (unsigned long)ret_system_call;
-
+    for(int i = 0; i < MAX_HANDLE_PER_TASK; i++)
+        if(child->handle_array[i]) file_get(child->handle_array[i]);
+    child->parent = parent;
+    child->vfork_parent = (flags & CLONE_VFORK) ? parent : NULL;
+    child->priority = 2;
+    child->state = TASK_UNINTERRUPTABLE;
+    child->preempt_count = 0;
+    child->flags &= ~NEED_SCHEDULE;
+    __asm__ volatile("fxsave64 %0" : "=m"(child->fxstate));
+    copy_thread(child, stack_start, regs);
+    return sched_publish(child);
 }
 
-unsigned long DoExit(unsigned long code){
-    ColorPrintfk(BLUE, BLACK, "init return as %D\n", code);
-    while (1){
+void DoExit(unsigned long code){
+    (void)code;
+    TaskStruct *task = CURRENT;
+    struct LocalMemManager *old = task->lmm;
+    unsigned long irq = irq_save();
+    task->lmm = &InitLmm;
+    vm_switch_root(CURRENT->cpu_id, (unsigned long)InitLmm.pgd);
+    complete_vfork(task);
+    irq_restore(irq);
+    mm_put(old);
+    exit_files(task);
 
-    }
+    sched_exit();
 }
 
 /*
@@ -526,7 +336,6 @@ void TaskInit(){
     extern char _ebss;
     extern unsigned long _stack_start;
 
-    struct TaskStruct *p = NULL;
     long cpu_id         = smp_cpu_id();
 
     unsigned long * vaddr   = NULL;
@@ -560,25 +369,24 @@ void TaskInit(){
     if(InitLmm.vma_list.next == NULL)
         lmm_init(&InitLmm);
 
-    SetTss( (unsigned int*)&InitTss[cpu_id], InitThreads[cpu_id]->rsp0, InitTss[cpu_id].rsp1, InitTss[cpu_id].rsp2, 
-            InitTss[cpu_id].ist1, InitTss[cpu_id].ist2, InitTss[cpu_id].ist3,
-            InitTss[cpu_id].ist4, InitTss[cpu_id].ist5, InitTss[cpu_id].ist6,
-            InitTss[cpu_id].ist7);
-    
-    InitTss[cpu_id].rsp0 = InitThreads[cpu_id]->rsp0;
+    InitTss[cpu_id].rsp0 = InitThread.rsp0;
 
     ListInit(&InitTaskUnions[cpu_id]->task.list);
+
+    CURRENT->state = TASK_RUNNING;
+    task_cpu_init();
+}
+
+void task_cpu_init(void){
+    unsigned long cr0, cr4;
+    __asm__ volatile("mov %%cr0,%0" : "=r"(cr0));
+    cr0 = (cr0 & ~((1UL << 2) | (1UL << 3))) | (1UL << 1);
+    __asm__ volatile("mov %0,%%cr0" :: "r"(cr0) : "memory");
+    __asm__ volatile("mov %%cr4,%0" : "=r"(cr4));
+    __asm__ volatile("mov %0,%%cr4" :: "r"(cr4 | (3UL << 9)) : "memory");
+    __asm__ volatile("fxrstor64 %0" :: "m"(initial_fxstate));
 
     wrmsr(MSR_IA32_SYSENTER_CS, KERNEL_CS);
     wrmsr(MSR_IA32_SYSENTER_ESP, CURRENT->thread->rsp0);
     wrmsr(MSR_IA32_SYSENTER_EIP, (unsigned long)Syscall);
-
-    // Second Process Should Be User State
-    KernelThread(init, 10, TATTR(CLONG_FS) | TATTR(CLONG_FS) | TATTR(CLONG_SIGNAL));
-
-    InitTaskUnions[cpu_id]->task.state = TASK_RUNING;
-
-    // p = ContainerOf(ListNext(&task_scheduler.task_queue.list), struct TaskStruct, list);
-
-    // SWITCH_TO(CURRENT, p);
 }

@@ -10,6 +10,8 @@
                     "jmp    LABEL_SYSCALL                           \n\t"   );
 
 #define __SYSFUNC_DEF_(name, nr) __SYSFUNC_DEF__(name, nr)
+#define STR_NR_(n) #n
+#define STR_NR(n) STR_NR_(n)
 #define SYSFUNC_DEF(name)   __SYSFUNC_DEF_(name, __NR_##name)
 
 SYSFUNC_DEF(putstring)
@@ -19,13 +21,29 @@ SYSFUNC_DEF(read)
 SYSFUNC_DEF(lseek)
 SYSFUNC_DEF(write)
 SYSFUNC_DEF(fork)
-SYSFUNC_DEF(vfork)
+/* The child shares the user stack until exec/exit. Keep the parent's return
+ * address in the saved register frame, away from the child's calls. */
+__asm__(".global vfork\n"
+        "vfork: popq %r9\n"
+        "movq %rsp, %r11\n"
+        "leaq 1f(%rip), %r10\n"
+        "movq $" STR_NR(__NR_vfork) ", %rax\n"
+        "sysenter\n"
+        "1: cmpq $-4095, %rax\n"
+        "jb 2f\n"
+        "movq %rax, errno(%rip)\n"
+        "movq $-1, %rax\n"
+        "2: jmp *%r9\n");
 SYSFUNC_DEF(execve)
 SYSFUNC_DEF(brk)
 SYSFUNC_DEF(reboot)
 SYSFUNC_DEF(chdir)
 SYSFUNC_DEF(fchdir)
 SYSFUNC_DEF(getdents)
+SYSFUNC_DEF(mmap)
+SYSFUNC_DEF(munmap)
+SYSFUNC_DEF(msync)
+__SYSFUNC_DEF_(_exit, __NR_exit)
 
 
 long errno;

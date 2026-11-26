@@ -234,8 +234,7 @@ void FloppyInit(){
     entry.DelivStatus   = DELIV_S_IDLE;
     entry.reserverd     = 0;
     entry.DestField.physical.reserverd1 = 0;
-    entry.DestField.physical.physic_dst = 0;
-    entry.DestField.physical.reserverd2 = 0;
+    entry.DestField.physical.physic_dst = get_lapic_id();
 
     FloppyReset();
     RegisterIrq(0x26, &entry, FloppyHandler, 0 , &FloppyController, "PS/2 FloppyInterrupt");

@@ -9,6 +9,9 @@
 #include "softirq.h"
 #include "schedule.h"
 #include "smp.h"
+#ifdef TALIOS_SCHED_CHECK
+#include "keyboard.h"
+#endif
 
 #define GCAP_ID 0x0
 #define GEN_CONF 0x10
@@ -40,41 +43,17 @@
 #define TIME7_COMP 0x1e8
 
 
-unsigned long volatile jiffies = 0;
 HwInterruptT hpet_controller;
 extern Time global_time;
-extern timer_list timer_list_header;
-
-struct List *ListNext(struct List* list);
 
 void hpet_handler(struct PtRegs * regs, unsigned long nr, unsigned long arg){
 
-    jiffies++;
-    if(ContainerOf(ListNext(&timer_list_header.list), timer_list, list)->expire_jiffies <= jiffies)
-    add_softirq_status(TIME_SIRQ);
-
-    struct TaskStruct * current = CURRENT;
-    scheduler *task_scheduler = &task_schedulers[current->cpu_id];
-
-    switch (current->priority){
-        case 0:
-        case 1:
-            task_scheduler->CPU_exec_task_jiffies -= 1;
-            current->vrun_time += 1;
-            break;
-
-        case 2:
-            task_scheduler->CPU_exec_task_jiffies -= 2;
-            current->vrun_time += 2;
-            break;
-    }
-
-    // interrupt_cpu(0xc8, -1);
-    if(task_scheduler->CPU_exec_task_jiffies <= 0){
-        CURRENT->flags |= NEED_SCHEDULE;
-    }
-
-    
+    timer_tick();
+    scheduler_tick();
+    smp_timer_tick();
+#ifdef TALIOS_SCHED_CHECK
+    keyboard_test_tick(regs->rip);
+#endif
 }
 
 void hpet_init(){
@@ -92,26 +71,31 @@ void hpet_init(){
     entry.DelivStatus   = DELIV_S_IDLE;
     entry.reserverd     = 0;
     entry.DestField.physical.reserverd1 = 0;
-    entry.DestField.physical.physic_dst = 0;
-    entry.DestField.physical.reserverd2 = 0;
+    entry.DestField.physical.physic_dst = get_lapic_id();
 
     RegisterIrq(0x22, &entry, &hpet_handler, 0, &hpet_controller, "hpet controller");
 
-    *(unsigned long *)(hpet_addr + GEN_CONF) = 3;
-    mfence();
-
-    *(unsigned long *)(hpet_addr + TIME0_CONF) = 0x004c;
-    mfence();
-
-    *(unsigned long *)(hpet_addr + TIME0_COMP) = 1000000000;
-    mfence();
-
+    /* Program the 100 Hz period in HPET counter ticks (capability units
+     * are femtoseconds per tick). In periodic mode the first comparator
+     * write sets the deadline and the second sets its increment. */
+    volatile unsigned long *hpet = (volatile unsigned long *)hpet_addr;
+    unsigned long period_fs = hpet[GCAP_ID / 8] >> 32;
+    unsigned long ticks = 10000000000000UL / period_fs;
+    hpet[GEN_CONF / 8] = 0;
+    hpet[MAIN_CNT / 8] = 0;
+    hpet[TIME0_CONF / 8] = 0x004c;
+    hpet[TIME0_COMP / 8] = ticks;
+    hpet[TIME0_COMP / 8] = ticks;
+    hpet[GEN_CONF / 8] = 3;
     get_cmos_time(&global_time);
-    *(unsigned long *)(hpet_addr + MAIN_CNT) = 0;
-    mfence();
-
 
     ColorPrintfk(BLUE, BLACK, "hpet drive initialization finish at %d-%d-%d/%d:%d:%d\n", \
                 global_time.year, global_time.month, global_time.day, \
                 global_time.hour, global_time.minute, global_time.second);
+}
+void hpet_delay_us(unsigned long us){
+    volatile unsigned long *hpet = (volatile unsigned long *)PHY_TO_VIRT(0xfed00000);
+    unsigned long ticks = us * 1000000000UL / (hpet[GCAP_ID / 8] >> 32);
+    unsigned long start = hpet[MAIN_CNT / 8];
+    while(hpet[MAIN_CNT / 8] - start < ticks) __asm__ volatile("pause");
 }

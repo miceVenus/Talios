@@ -11,6 +11,7 @@ DIR * opendir(const char * path){
     if(fd >= 0)
         dir = (DIR *)malloc(sizeof(DIR));
     else return NULL;
+    if(!dir){ close(fd); return NULL; }
 
     memset(dir, 0, sizeof(DIR));
 

@@ -44,6 +44,7 @@ typedef struct timer_list{
 void init_timer(timer_list *timer, void (*func)(void *data), void *data, unsigned long expire_jiffies);
 void add_timer(timer_list *list);
 void delete_timer(timer_list *list);
+void timer_tick(void);
 
 void get_cmos_time(Time * time);
 void time_init();

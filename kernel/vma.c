@@ -1,4 +1,4 @@
-#include "vma.h"
+#include "mmap.h"
 #include "task.h"
 #include "errno.h"
 
@@ -24,6 +24,7 @@ void vma_destroy_all(struct LocalMemManager *mm){
         next = pos->next;
 
         ListDelete(&vma->list);
+        vm_object_detach(vma);
         kfree(vma);
         pos = next;
     }
@@ -54,6 +55,7 @@ int vma_clone_all(struct LocalMemManager *src,
         memcopy(src_vma, dst_vma, sizeof(vm_area_struct));
         ListInit(&dst_vma->list);
         dst_vma->vm_mm = dst;
+        vm_object_attach(dst_vma);
         ListForeAdd(&dst_vma->list, &dst->vma_list);
     }
 
@@ -149,47 +151,21 @@ int range_is_free(struct LocalMemManager *mm,
     return 1;
 }
 
-unsigned long find_unmapped_area(struct LocalMemManager *mm,
-                                 unsigned long len){
-    unsigned long cur;
-    struct List *ptr;
-
-    if(mm == NULL || mm->vma_list.next == NULL || len == 0 ||
-       (len & (PAGE_4K_SIZE - 1)) != 0 ||
-       len > USER_LIMIT - PAGE_4K_SIZE)
-        return (unsigned long)-ENOMEM;
-
-    cur = mm->mmap_base ? PAGE_4K_ALIGN_UP(mm->mmap_base) :
-                          DEFAULT_MMAP_BASE;
-    if(cur < PAGE_4K_SIZE)
-        cur = PAGE_4K_SIZE;
-
-    if(cur >= USER_LIMIT || len > USER_LIMIT - cur)
-        return (unsigned long)-ENOMEM;
-
-    ptr = mm->vma_list.next;
-    while(ptr != &mm->vma_list){
-        vm_area_struct *vma = ContainerOf(ptr, vm_area_struct, list);
-
-        if(vma->end <= cur){
-            ptr = ptr->next;
-            continue;
-        }
-
-        if(vma->start >= cur && vma->start - cur >= len)
-            return cur;
-
-        if(vma->end > cur)
-            cur = PAGE_4K_ALIGN_UP(vma->end);
-
-        if(cur >= USER_LIMIT || len > USER_LIMIT - cur)
-            return (unsigned long)-ENOMEM;
-
-        ptr = ptr->next;
+static unsigned long find_gap(struct LocalMemManager *mm, unsigned long cur, unsigned long len){
+    struct List *head = &mm->vma_list;
+    for(struct List *pos = head->next; pos != head; pos = pos->next){
+        vm_area_struct *v = ContainerOf(pos, vm_area_struct, list);
+        if(v->end <= cur) continue;
+        if(v->start >= cur && len <= v->start - cur) return cur;
+        cur = v->end;
     }
+    return len <= USER_LIMIT - cur ? cur : (unsigned long)-ENOMEM;
+}
 
-    if(len <= USER_LIMIT - cur)
-        return cur;
-
-    return (unsigned long)-ENOMEM;
+unsigned long find_unmapped_area(struct LocalMemManager *mm, unsigned long len){
+    if(!mm || !mm->vma_list.next || !len || (len & (PAGE_4K_SIZE - 1)) ||
+       len > USER_LIMIT - PAGE_4K_SIZE) return -ENOMEM;
+    unsigned long addr = find_gap(mm, mm->mmap_base, len);
+    if((long)addr < 0) addr = find_gap(mm, PAGE_4K_SIZE, len);
+    return addr;
 }

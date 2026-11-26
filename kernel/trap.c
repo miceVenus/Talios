@@ -9,22 +9,31 @@
 
 
 void SysVectorInit(){
-    SetTrapGate(0,  1, divide_error);
-    SetTrapGate(10, 1, invalid_TSS);
-    SetTrapGate(14, 1, page_fault);
-    SetTrapGate(13, 1, general_purpose);
-    SetTrapGate(8, 1, double_fault);
-    SetTrapGate(17, 1, alignment_check_fault);
-    SetTrapGate(6, 1, undefined_opcode_fault);
-    // sti();
+    /* Recoverable user faults use the owning task's kernel stack. Reserve
+     * the emergency stack for exceptions from which the CPU cannot resume. */
+    SetIntrGate(0,  0, divide_error);
+    SetIntrGate(10, 1, invalid_TSS);
+    SetIntrGate(14, 0, page_fault);
+    SetIntrGate(13, 0, general_purpose);
+    SetIntrGate(8,  1, double_fault);
+    SetIntrGate(17, 0, alignment_check_fault);
+    SetIntrGate(6,  0, undefined_opcode_fault);
 }
 
-
+static void exit_if_user_fault(unsigned long rsp, int trap, int status){
+    struct PtRegs *regs = (void *)rsp;
+    if((regs->cs & 3) == 3){
+        sti();
+        ColorPrintfk(RED, BLACK, "user trap %d pid %D at %p\n", trap, CURRENT->pid, (void *)regs->rip);
+        DoExit(status);
+    }
+}
 
 void DoDivideError(unsigned long rsp, unsigned long ErroCode){
+    exit_if_user_fault(rsp, 0, 128 + 8);
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
     ColorPrintfk(RED, BLACK, "Bad Division(0) In RIP: %p, RSP: %p, ERRCODE: %x \n", \
-        rip, rsp, ErroCode);
+        (void *)*rip, (void *)rsp, ErroCode);
     while(1){
         hlt();
     }
@@ -65,8 +74,14 @@ void DoPageFault(unsigned long rsp, unsigned long ErroCode){
 
     unsigned long *rip = (unsigned long *)(rsp + 0x98);
 
+    if(((struct PtRegs *)rsp)->rflag & (1UL << 9)) sti();
     if(handle_page_fault(CURRENT->lmm, cr2, ErroCode) == 0)
         return;
+    if((ErroCode & 4) && (((struct PtRegs *)rsp)->cs & 3) == 3){
+        ColorPrintfk(RED, BLACK, "user page fault pid %d addr %p code %x\n",
+                     CURRENT->pid, (void *)cr2, ErroCode);
+        DoExit(128 + 11);
+    }
     
     ColorPrintfk(RED, BLACK, "do_pageFault(14) In RIP: %p, RSP: %p, ERRCODE: %X \n", \
         (void *)*rip, (void *)rsp, ErroCode);
@@ -116,8 +131,9 @@ void DoNmi(unsigned long rsp, unsigned long ErroCode){
 
 
 void DoGeneralPurpose(unsigned long rsp, unsigned long ErroCode){
+    exit_if_user_fault(rsp, 13, 128 + 11);
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
-    ColorPrintfk(0xFF0000, 0x0000, "GPF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    ColorPrintfk(0xFF0000, 0x0000, "GPF In RIP: %p, RSP: %p, ERRCODE: %X\n", (void *)*rip, (void *)rsp, ErroCode);
     while(1){
         hlt();
     }
@@ -133,16 +149,18 @@ void DoDoubleFault(unsigned long rsp, unsigned long ErroCode){
 }
 
 void DoAlignmentCheckFault(unsigned long rsp, unsigned long ErroCode){
+    exit_if_user_fault(rsp, 17, 128 + 7);
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
-    ColorPrintfk(0xFF0000, 0x0000, "ACF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    ColorPrintfk(0xFF0000, 0x0000, "ACF In RIP: %p, RSP: %p, ERRCODE: %X\n", (void *)*rip, (void *)rsp, ErroCode);
     while(1){
         hlt();
     }
 }
 
 void DoUndefinedOpcodeFault(unsigned long rsp, unsigned long ErroCode){
+    exit_if_user_fault(rsp, 6, 128 + 4);
     uint64_t* rip = (uint64_t *)(rsp + 0x98);
-    ColorPrintfk(0xFF0000, 0x0000, "UOF In RIP: %p, RSP: %p, ERRCODE: %X\n", rip, rsp, ErroCode);
+    ColorPrintfk(0xFF0000, 0x0000, "UOF In RIP: %p, RSP: %p, ERRCODE: %X\n", (void *)*rip, (void *)rsp, ErroCode);
     while(1){
         hlt();
     }

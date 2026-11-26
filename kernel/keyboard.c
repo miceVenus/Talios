@@ -1,3 +1,4 @@
+#include "errno.h"
 #include "keyboard.h"
 #include "memory.h"
 #include "interrupt.h"
@@ -279,26 +280,40 @@ static HwInterruptT KBController;
 static int ShiftL, ShiftR, CtrlL, CtrlR, AltL, AltR, Caps;
 
 wait_queue_t keyboard_wait_queue;
+static SpinLock_T keyboard_lock;
+
+#ifdef TALIOS_SCHED_CHECK
+/* Exercise the PS/2 IRQ only after a reader sleeps and HPET wakes a halted
+ * BSP. The controller's D2 command delivers the byte through the normal IRQ. */
+void keyboard_test_tick(unsigned long ip){
+    extern char sched_idle_resume[];
+    static int sent;
+    if(sent || ip != (unsigned long)sched_idle_resume) return;
+    unsigned long irq = spin_lock_irqsave(&keyboard_lock);
+    int waiting = !ListIsEmpty(&keyboard_wait_queue.wait_list);
+    spin_unlock_irqrestore(&keyboard_lock, irq);
+    if(waiting){
+        sent = 1;
+        WAIT_KB_WRITE();
+        OUT8b(KB_CMD_PORT, 0xd2);
+        WAIT_KB_WRITE();
+        OUT8b(KB_DATA_PORT, 0x1c);
+    }
+}
+#endif
 
 int keyboard_close(index_node *inode, file *filp){
     filp->private_data = NULL;
-    KBIB->PHead = KBIB->buf;
-    KBIB->PTail = KBIB->buf;
-    KBIB->count = 0;
-    memset(KBIB->buf, 0, KB_BUF_SIZE);
     return 1;
 }
 
 int keyboard_open(index_node *inode, file *filp){
     filp->private_data = KBIB;
-    KBIB->PHead = KBIB->buf;
-    KBIB->PTail = KBIB->buf;
-    KBIB->count = 0;
-    memset(KBIB->buf, 0, KB_BUF_SIZE);
     return 1;
 }
 
 int keyboard_ioctl(index_node *inode, file *filp, unsigned long cmd, unsigned long arg){
+    unsigned long irq = spin_lock_irqsave(&keyboard_lock);
     switch (cmd){
         case KEY_CMD_RESET_BUFFER:
             KBIB->PHead  = KBIB->buf;
@@ -311,29 +326,24 @@ int keyboard_ioctl(index_node *inode, file *filp, unsigned long cmd, unsigned lo
             break;
     }
 
+    spin_unlock_irqrestore(&keyboard_lock, irq);
     return 0;
 }
-int keyboard_lseek(file *filp, long offset, long origin){}
+long keyboard_lseek(file *filp, long offset, long origin){ return -ESPIPE; }
 
 int keyboard_read(file *filp, char *buf, unsigned long count, long *position){
-    unsigned char *tail = NULL;
-    unsigned long counter;
-
-    if(KBIB->count == 0) sleep_on(&keyboard_wait_queue);
-
-    counter = count < KBIB->count ? count : KBIB->count;
-    tail = KBIB->PTail;
-    if(counter <= (KBIB->buf - KBIB->PTail + KB_BUF_SIZE)){
-        copy_to_user(tail, buf, counter);
-        KBIB->PTail += counter;
-    }else{
-        copy_to_user(tail, buf, (KBIB->buf - tail + KB_BUF_SIZE));
-        copy_to_user(KBIB->PHead, buf, counter - (KBIB->buf - tail + KB_BUF_SIZE));
-        KBIB->PTail = KBIB->PHead + counter - (KBIB->buf - tail + KB_BUF_SIZE);
+    if(!count) return 0;
+    unsigned char bytes[KB_BUF_SIZE];
+    unsigned long irq = spin_lock_irqsave(&keyboard_lock);
+    while(!KBIB->count) sleep_on(&keyboard_wait_queue, &keyboard_lock);
+    unsigned long n = min(count, (unsigned long)KBIB->count);
+    for(unsigned long i = 0; i < n; i++){
+        bytes[i] = *KBIB->PTail++;
+        if(KBIB->PTail == KBIB->buf + KB_BUF_SIZE) KBIB->PTail = KBIB->buf;
     }
-    KBIB->count -= counter;
-    return counter;
-
+    KBIB->count -= n;
+    spin_unlock_irqrestore(&keyboard_lock, irq);
+    return copy_to_user(bytes, buf, n) ? -EFAULT : (int)n;
 }
 int keyboard_write(file *filp, char *buf, unsigned long count, long *position){
     return 0;
@@ -342,13 +352,16 @@ int keyboard_write(file *filp, char *buf, unsigned long count, long *position){
 void KeyboardHandler(struct PtRegs *regs, unsigned long nr, unsigned long arg)
 {
     unsigned char x = IN8b(0x60);
+    unsigned long irq = spin_lock_irqsave(&keyboard_lock);
+    if(KBIB->count == KB_BUF_SIZE){ spin_unlock_irqrestore(&keyboard_lock, irq); return; }
     if (KBIB->PHead == KBIB->buf + KB_BUF_SIZE)
         KBIB->PHead = KBIB->buf;
 
     *(KBIB->PHead) = x;
     KBIB->count++;
     KBIB->PHead++;
-    wake_up(&keyboard_wait_queue, TASK_UNINTERRUPTABLE);
+    wake_up(&keyboard_wait_queue);
+    spin_unlock_irqrestore(&keyboard_lock, irq);
     
 }
 
@@ -389,8 +402,7 @@ void KeyboardInit()
     entry.DelivStatus = DELIV_S_IDLE;
     entry.reserverd = 0;
     entry.DestField.physical.reserverd1 = 0;
-    entry.DestField.physical.physic_dst = 0;
-    entry.DestField.physical.reserverd2 = 0;
+    entry.DestField.physical.physic_dst = get_lapic_id();
 
     WAIT_KB_WRITE();
     OUT8b(KB_CMD_PORT, KB_CONF_WRITE);

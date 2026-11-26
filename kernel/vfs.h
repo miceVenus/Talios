@@ -45,6 +45,8 @@ typedef struct super_block{
 
 
 typedef struct index_node{
+    unsigned long ino;
+    struct vm_object *mapping;
     unsigned long file_size;
     unsigned long blocks;
     unsigned long attribute;
@@ -69,6 +71,7 @@ typedef struct dir_entry{
 }dir_entry;
 
 typedef struct file{
+    unsigned long refs;
     long position;
     unsigned long mode;
     dir_entry * dentry;
@@ -80,12 +83,13 @@ typedef struct file{
 typedef struct super_block_operations{
     void (*put_sb)(super_block * sb);
     void (*write_sb)(super_block * sb);
-    void (*write_inode)(index_node * inode);
+    int (*write_inode)(index_node * inode);
 }super_block_operations;
 
 typedef struct index_node_operations{
 
     int (*create)(index_node * inode, dir_entry * entry, int mode);
+    int (*truncate)(index_node *inode);
     dir_entry* (*lookup)(index_node * inode, dir_entry * entry);
     int (*mkdir)(index_node * inode, dir_entry * entrym, int mode);
     int (*rmdir)(index_node * inode, dir_entry * dentry);
@@ -110,7 +114,7 @@ typedef struct file_operations{
     int (*readdir)(file * filp, char * buf, filldir_t filler);
     int (*write)(file * filp, char * buf, unsigned long count, long * position);
     int (*close)(index_node * inode, file * filp);
-    int (*lseek)(file * filp, long offset, long origin);
+    long (*lseek)(file * filp, long offset, long origin);
     int (*ioctl)(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
 
 }file_operations;
@@ -119,5 +123,7 @@ typedef struct file_operations{
 super_block * mount_fs(char * name, disk_partition_table_entry * dpte, void * buf);
 int register_filesystem(file_system_type * fs);
 dir_entry* path_walk(char *path, unsigned long flags);
+void file_get(file *filp);
+int file_put(file *filp);
 
 #endif

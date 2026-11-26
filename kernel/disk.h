@@ -10,6 +10,7 @@
 #include "semaphore.h"
 
 typedef struct block_buffer_node{
+    int success;
     unsigned int count;
     unsigned char cmd;
     unsigned long lba;
@@ -50,7 +51,7 @@ struct disk_device_info{
 
         unsigned long   reserved3;
         unsigned int    reserved4;
-    }__attribute__((packed));               // 0~19B
+    }__attribute__((packed)) config;        // 0~19B
 
     char serial_num[20];                    // 20~39B
 
@@ -64,7 +65,7 @@ struct disk_device_info{
                         has_LBA     : 1,    // 9
                         has_DMA     : 1,    // 10
                         reserved2   : 5;    // 11~15
-    }__attribute__((packed));               // 98~99B
+    }__attribute__((packed)) capabilities;  // 98~99B
 
     char reserved3[20];                     // 100B~119B
 
@@ -73,11 +74,11 @@ struct disk_device_info{
     char reserved4[28];                     // 124~151B
 
     struct SATA_function_status{
-        unsigned short  reserved1       : 2,        // 0~1
+        unsigned short  reserved1       : 1,        // 0
+                        SATA_gen1_1_5GB : 1,        // 1
                         SATA_gen2_3_0GB : 1,        // 2
-                        SATA_gen1_1_5GB : 1,        // 3
-                        reserved2       : 12;       // 4~15
-    }__attribute__((packed));               // 152~153B
+                        reserved2       : 13;       // 3~15
+    }__attribute__((packed)) sata;          // 152~153B
 
     char reserved5[6];                      // 154~159B
 
@@ -88,8 +89,8 @@ struct disk_device_info{
                         is_ATAPI_6      : 1,        // 6
                         is_ATAPI_7      : 1,        // 7
                         is_ATAPI_8      : 1,        // 8
-                        reserved2       : 8;        // 9~15
-    }__attribute__((packed));                       // 160~161B
+                        reserved2       : 7;        // 9~15
+    }__attribute__((packed)) version;               // 160~161B
 
     unsigned short vice_version;                    // 162~163B
 
@@ -97,7 +98,7 @@ struct disk_device_info{
 
     unsigned long max_logic_sectors_48;             // 200~207B
 
-    char reserved7[44];                             // 208~351B
+    char reserved7[144];                            // 208~351B
 
     char media_serial_number[60];                   // 352~411B
 
@@ -111,7 +112,7 @@ struct disk_device_info{
                         SATA_REV_2_6            : 1,        // 4
                         reserved                : 7,        // 5~11
                         trans_type              : 4;        // 12~15 0 p 1 s
-    }__attribute__((packed));                       // 444~445B
+    }__attribute__((packed)) transport;             // 444~445B
 
     unsigned short trans_vice_version;              // 446~447B
 
@@ -120,9 +121,10 @@ struct disk_device_info{
     struct check_sum{
         unsigned short  A5h                     : 8,        // 0~7
                         check_sum_compan        : 8;        // 8~15
-    }__attribute__((packed));                       // 510~511B
+    }__attribute__((packed)) integrity;             // 510~511B
 
 }__attribute__((packed));
+_Static_assert(sizeof(disk_device_info) == 512, "ATA IDENTIFY returns one sector");
 
 
 // 16B totally

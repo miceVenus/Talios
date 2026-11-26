@@ -1,17 +1,22 @@
 #include "softirq.h"
 #include "lib.h"
+#include "task.h"
 
 
-unsigned long softirq_status = 0; // A status register
+static unsigned long pending[NR_CPUS];
+static unsigned char servicing[NR_CPUS];
 
 softirq softirq_vector[64] = {0};
 
 void add_softirq_status(unsigned long status){
-    softirq_status |= status;
+    unsigned long irq = irq_save();
+    pending[CURRENT->cpu_id] |= status;
+    irq_restore(irq);
 }
 
 unsigned long get_softirq_status(){
-    return softirq_status;
+    int cpu = CURRENT->cpu_id;
+    return servicing[cpu] ? 0 : pending[cpu];
 }
 
 void register_softirq(int nr, void (*action)(void * data), void *data){
@@ -25,16 +30,21 @@ void unregitser_softirq(int nr){
 }
 
 void softirq_init(){
-    softirq_status = 0;
+    memset(pending, 0, sizeof(pending));
     memset(softirq_vector, 0, sizeof(softirq) * 64);
 }
 
 void do_softirq(){
+    int cpu = CURRENT->cpu_id;
+    unsigned long work = pending[cpu];
+    pending[cpu] = 0;
+    servicing[cpu] = 1;
+    CURRENT->preempt_count++;
     sti();
-    for(int i = 0; i < 64; i++){
-        if(!GetBits(softirq_status, i, 1)) continue;
-        softirq_status &= ~(1 << i);
-        softirq_vector[i].action(softirq_vector[i].data);
-    }
+    for(int i = 0; i < 64; i++)
+        if((work & (1UL << i)) && softirq_vector[i].action)
+            softirq_vector[i].action(softirq_vector[i].data);
     cli();
+    CURRENT->preempt_count--;
+    servicing[cpu] = 0;
 }

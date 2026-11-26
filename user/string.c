@@ -2,14 +2,8 @@
 #include "stdlib.h"
 
 char *strrvs(char *Str){
-    int Length = strlen(Str);
-    char *TailPtr = Length - 1 + Str;
-    char *HeadPtr = Str;
-    while(TailPtr != HeadPtr){
-        SwitchMem(HeadPtr, TailPtr);
-        HeadPtr++;
-        TailPtr--;
-    }
+    for(int l = 0, r = strlen(Str) - 1; l < r; l++, r--)
+        SwitchMem(&Str[l], &Str[r]);
 
     return Str;
 }

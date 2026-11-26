@@ -99,6 +99,8 @@ enum PageTableEntryAttribute{
     PEA_WRITE_THROUGH       = (1UL << 3),
     PEA_CACHE_DISABLE       = (1UL << 4),
     PEA_PAGE_SIZE           = (1UL << 7),
+    PEA_COW                 = (1UL << 9),
+    PEA_NO_EXEC             = (1UL << 63),
 
     PEA_USER_TABLE          = PEA_PRESENT | PEA_READ_WRITE | PEA_IS_USER,
     PEA_USER_PAGE           = PEA_USER_TABLE,
@@ -157,6 +159,7 @@ typedef unsigned long pml4t_t ;
 
 struct LocalMemManager{
     pml4t_t *pgd;
+    unsigned long users;
 
     // all of this is addr
     unsigned long StartCode,    EndCode;
@@ -199,6 +202,7 @@ struct Page{
     unsigned long   RefCount;
     unsigned long   age;
 
+    signed char allocation_order;
     unsigned char   reserved;   
 
     struct List     buddy_list;
@@ -266,11 +270,9 @@ struct SlabCache* CreateSlabCache(  unsigned long SlabSize, void *(*Constructor)
                                     void *(*Destructor)(void *Vaddr, unsigned long arg), unsigned long arg);
 struct Slab* CreatSlab(unsigned long size, int ZoneSelector);
 void InitPageTable();
-unsigned long do_brk(unsigned long start, unsigned long size);
 int MapPage4K(unsigned long pgd, unsigned long vaddr, struct Page *page, unsigned long flags);
-struct Page *UnmapPage4K(unsigned long pgd, unsigned long vaddr);
-long MapUserRange4K(unsigned long pgd, unsigned long start, unsigned long size);
-void FreeUserPageTables(unsigned long pgd);
+void page_get(struct Page *page);
+void page_put(struct Page *page);
 
 
 void lmm_init(struct LocalMemManager *mm);

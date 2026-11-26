@@ -1,4 +1,5 @@
 #include "lib.h"
+#include "mmap.h"
 
 /*
     @brief Transfer A Num To A String Simply
@@ -48,9 +49,7 @@ int NumToString(char *Buffer, long Num, unsigned int base, int Upper){
 
 */
 void memset(void *Src, char num, size_t n){
-    char *src = (char *)Src;
-    char *dst = src + n;
-    while(src < dst) *(src++) = num;
+    __asm__ volatile("rep stosb" : "+D"(Src), "+c"(n) : "a"((unsigned char)num) : "memory");
 }
 
 /*
@@ -58,21 +57,11 @@ void memset(void *Src, char num, size_t n){
 */
 void memcopy(void *Src, void *Dst, size_t n){
 
-    char *src = (char *)Src;
-    char *dst = (char *)Dst;
-
-    short int IsBackcopy = 0;
-    uintptr_t SrcPtr = (uintptr_t)src;
-    uintptr_t DstPtr = (uintptr_t)dst;
-
-    IsBackcopy = (DstPtr > SrcPtr && DstPtr < SrcPtr + n);
-
-    if(IsBackcopy){
-        dst = dst + n - 1;
-        src = src + n - 1;
-        while (n--) *(dst--) = *(src--);
+    unsigned char *src = Src, *dst = Dst;
+    if((uintptr_t)dst > (uintptr_t)src && (uintptr_t)dst - (uintptr_t)src < n){
+        while(n){ n--; dst[n] = src[n]; }
     }else{
-        while (n--) *(dst++) = *(src++);
+        __asm__ volatile("rep movsb" : "+S"(src), "+D"(dst), "+c"(n) :: "memory");
     }
 }
 
@@ -83,14 +72,8 @@ void memcopy(void *Src, void *Dst, size_t n){
     @return Reversed String
 */
 char *StringReverse(char *Str){
-    int Length = StringLen(Str);
-    char *TailPtr = Length - 1 + Str;
-    char *HeadPtr = Str;
-    while(TailPtr != HeadPtr){
-        SwitchMem(HeadPtr, TailPtr);
-        HeadPtr++;
-        TailPtr--;
-    }
+    for(int l = 0, r = StringLen(Str) - 1; l < r; l++, r--)
+        SwitchMem(&Str[l], &Str[r]);
 
     return Str;
 }
@@ -145,54 +128,38 @@ void lower_case(char *str){
     }
 }
 
-long copy_from_user(void * from, void * to, unsigned long size){
-
-    unsigned long d0, d1;
-    if(!verify_area((unsigned char *)from, size))
-        return 0;
-    __asm__ volatile(
-        "rep            \n\t"
-        "movsq          \n\t"
-        "movq   %3, %0  \n\t"
-        "rep            \n\t"
-        "movsb          \n\t"
-        :"=&c"(size), "=&D"(d0), "=&S"(d1)
-        :"r"(size & 7), "0"(size >> 3), "1"(to), "2"(from)
-        :"memory"
-    );
-
-    return size;
+/* Return the number of bytes not copied, as expected by uaccess callers. */
+long copy_from_user(const void *from, void *to, unsigned long size){
+    vm_lock();
+    int rc = vm_copy_user_locked((void *)from, to, size, 0);
+    vm_unlock();
+    return rc ? (long)size : 0;
 }
 
-long copy_to_user(void * from, void * to, unsigned long size){
-
-    unsigned long d0, d1;
-    if(!verify_area((unsigned char *)to, size))
-        return 0;
-    __asm__ volatile(
-        "rep            \n\t"
-        "movsq          \n\t"
-        "movq   %3, %0  \n\t"
-        "rep            \n\t"
-        "movsb          \n\t"
-        :"=&c"(size), "=&D"(d0), "=&S"(d1)
-        :"r"(size & 7), "0"(size >> 3), "1"(to), "2"(from)
-        :"memory"
-    );
-
-    return size;
+long copy_to_user(void *from, void *to, unsigned long size){
+    vm_lock();
+    int rc = vm_copy_user_locked(to, from, size, 1);
+    vm_unlock();
+    return rc ? (long)size : 0;
 }
 
-long strncpy_from_user(char * src, char * dst, unsigned long size){
-    long ret = copy_from_user((void *)src, (void *)dst, size);
-    dst[size] = '\0';
-    return ret;
+long strncpy_from_user(const char *src, char *dst, unsigned long size){
+    long rc = copy_from_user(src, dst, size);
+    if(!rc) dst[size] = 0;
+    return rc;
 }
 
-long strnlen_user(char *src, unsigned long size){
-    if(!verify_area(src, size)) return 0;
-
-    char *Ptr = src;
-    while(*Ptr != '\0' && (Ptr - src) < size) Ptr++;
-    return Ptr - src;
+long strnlen_user(const char *src, unsigned long size){
+    unsigned long total = 0;
+    vm_lock();
+    while(total < size){
+        const char *p = src + total;
+        unsigned long part = min(size - total, PAGE_4K_SIZE - ((unsigned long)p & (PAGE_4K_SIZE - 1)));
+        if(vm_copy_user_locked((void *)p, NULL, part, 0)){ vm_unlock(); return -1; }
+        for(unsigned long n = 0; n < part; n++, total++){
+            if(!p[n]){ vm_unlock(); return total; }
+        }
+    }
+    vm_unlock();
+    return total;
 }

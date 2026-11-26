@@ -30,6 +30,7 @@ file_operations FAT32_f_ops = {
 };
 index_node_operations FAT32_inode_ops = {
     .create     = &fat32_create,
+    .truncate   = &fat32_truncate,
     .lookup     = &fat32_lookup,
     .mkdir      = &fat32_mkdir,
     .rmdir      = &fat32_rmdir,
@@ -60,68 +61,99 @@ struct file_system_type FAT32_filesystem = {
 };
 
 
-void fsde(char *buf, char *name){
-    int i = 0, j = 0;
-    for(i = 0; i < 11; i++){
-        if(name[i] == ' ') continue;
-        buf[j++] = name[i];
+static void short_filename(const FAT32_Directory *e, char *out){
+    unsigned int n = 0;
+    for(int i = 0; i < 11; i++){
+        unsigned char c = e->dir_name[i];
+        if(c == ' ') continue;
+        if(i == 8) out[n++] = '.';
+        if((e->dir_ntres & (i < 8 ? 8 : 16)) && c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        out[n++] = c;
     }
-    buf[j] = '\0';
-    upper_case(buf);
+    out[n] = 0;
 }
 
-void fdn2sde(char *buf, char *dir_name){
-    int i = 0, j = 0;
-    for(i = 0; i < StringLen(dir_name); i++){
-        if(dir_name[i] == '.') continue;
-        if(dir_name[i] == ' ') continue;
-        buf[j++] = dir_name[i];
+static int filename_equal(const char *a, const char *b){
+    while(*a && *b){
+        unsigned char x = *a++, y = *b++;
+        if(x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if(y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if(x != y) return 0;
     }
-    buf[j] = '\0';
-    upper_case(buf);
+    return *a == *b;
 }
 
-unsigned int fat32_find_next_avaliale_cluster(FAT32_sb_info * fsb){
-    int i, j;
-    unsigned long sec_per_fat = fsb->sec_per_fat;
-    unsigned int * fat_slace = (unsigned int*)kmalloc(fsb->byte_per_sec, 0);
-    for(i = 0; i < sec_per_fat; i++){
-        ide_transfer(ATA_READ_CMD, fsb->fat1_start_sector + i, 1 , (unsigned char *)fat_slace);
-        
-        for(j = 0; j < 128; j++){
-            if(fat_slace[j] & 0xfffffff == 0)
-                return (i << 7) + j;
+static void long_filename_part(char name[256], const FAT32_LongDirectory *e){
+    unsigned int order = e->ldir_ord & 0x3f;
+    if(e->ldir_ord & 0x40) memset(name, 0, 256);
+    if(!order || order > 20) return;
+    unsigned int pos = (order - 1) * 13;
+    for(int i = 0; i < 13 && pos < 255; i++, pos++){
+        unsigned int ch = i < 5 ? e->ldir_name1[i] :
+                          i < 11 ? e->ldir_name2[i - 5] : e->ldir_name3[i - 11];
+        name[pos] = ch == 0xffff ? 0 : (char)ch;
+    }
+    name[255] = 0;
+}
+
+static unsigned long cluster_limit(FAT32_sb_info *sb){
+    return 2 + (sb->sec_count - (sb->fst_data_sector - sb->start_sec)) / sb->sec_per_clus;
+}
+
+static long find_free_cluster(FAT32_sb_info *sb){
+    unsigned int *entries = kmalloc(sb->byte_per_sec, 0);
+    if(!entries) return -ENOMEM;
+    unsigned long per_sector = sb->byte_per_sec / sizeof(*entries);
+    unsigned long limit = cluster_limit(sb);
+    long result = -ENOSPC;
+    for(unsigned long i = 0; i < sb->sec_per_fat && i * per_sector < limit; i++){
+        if(!ide_transfer(ATA_READ_CMD, sb->fat1_start_sector + i, 1, (unsigned char *)entries)){
+            result = -EIO;
+            break;
+        }
+        for(unsigned long j = i ? 0 : 2; j < per_sector && i * per_sector + j < limit; j++){
+            if(!(entries[j] & 0x0fffffff)){
+                result = i * per_sector + j;
+                goto out;
+            }
         }
     }
-    return 0;
+out:
+    kfree(entries);
+    return result;
 }
 
-unsigned int fat32_table_read(FAT32_sb_info *fsb, unsigned int index){
-    unsigned int sec_index     = (index) / (fsb->byte_per_sec >> 2);
-    unsigned int sec_offset    = (index) % (fsb->byte_per_sec >> 2);
-    unsigned int *fat_slace = (unsigned int*)kmalloc(fsb->byte_per_sec, 0);
-    ide_transfer(ATA_READ_CMD, fsb->fat1_start_sector + sec_index, 1, (unsigned char *)fat_slace);
-
-    if(fat_slace[sec_offset] < 0xffffff7) {
-        unsigned int clus = fat_slace[sec_offset];
-        kfree(fat_slace);
-        return clus;
-    }else{
-        kfree(fat_slace);
-        return 0;
+/* Return zero for the end of a chain and propagate media errors to callers. */
+static long next_cluster(FAT32_sb_info *sb, unsigned long cluster){
+    if(cluster < 2 || cluster >= cluster_limit(sb)) return -EIO;
+    unsigned int *entries = kmalloc(sb->byte_per_sec, 0);
+    if(!entries) return -ENOMEM;
+    unsigned long per_sector = sb->byte_per_sec / sizeof(*entries);
+    long next = -EIO;
+    if(ide_transfer(ATA_READ_CMD, sb->fat1_start_sector + cluster / per_sector, 1, (unsigned char *)entries)){
+        next = entries[cluster % per_sector] & 0x0fffffff;
+        if(next >= 0x0ffffff8) next = 0;
+        else if(next < 2 || (unsigned long)next >= cluster_limit(sb)) next = -EIO;
     }
+    kfree(entries);
+    return next;
 }
 
-void fat32_table_write(FAT32_sb_info *fsb, unsigned int index, unsigned int content){
-    unsigned int sec_index     = (index) / (fsb->byte_per_sec >> 2);
-    unsigned int sec_offset    = (index) % (fsb->byte_per_sec >> 2);
-    unsigned int *fat_slace = (unsigned int*)kmalloc(fsb->byte_per_sec, 0);
-    ide_transfer(ATA_READ_CMD, fsb->fat1_start_sector + sec_index, 1, (unsigned char *)fat_slace);
-    fat_slace[sec_offset]   =  content;
-    ide_transfer(ATA_WRITE_CMD, fsb->fat1_start_sector + sec_index, 1, (unsigned char *)fat_slace);
-    ide_transfer(ATA_WRITE_CMD, fsb->fat1_start_sector + fsb->sec_per_fat + sec_index, 1, (unsigned char *)fat_slace);
-
-    kfree(fat_slace);
+static int set_cluster(FAT32_sb_info *sb, unsigned long cluster, unsigned int value){
+    unsigned int *entries = kmalloc(sb->byte_per_sec, 0);
+    if(!entries) return -ENOMEM;
+    unsigned long per_sector = sb->byte_per_sec / sizeof(*entries);
+    unsigned long sector = sb->fat1_start_sector + cluster / per_sector;
+    int ok = ide_transfer(ATA_READ_CMD, sector, 1, (unsigned char *)entries);
+    if(ok){
+        unsigned int *entry = &entries[cluster % per_sector];
+        *entry = (*entry & 0xf0000000) | value;
+        /* Publish the link in the primary table after writing its mirrors. */
+        for(unsigned long copy = sb->fat_num; copy && ok; copy--)
+            ok = ide_transfer(ATA_WRITE_CMD, sector + (copy - 1) * sb->sec_per_fat, 1, (unsigned char *)entries);
+    }
+    kfree(entries);
+    return ok ? 0 : -EIO;
 }
 
 
@@ -135,64 +167,55 @@ int fat32_setattr(dir_entry * dir, unsigned long * attr){}
 dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
 
     unsigned long lba;
-    unsigned long clus;
+    long clus;
     char lname_buf[256] = {0};
-    char sname_buf[12] = {0};
+    char sname_buf[13] = {0};
     memset(lname_buf, 0, 256);
 
-    FAT32_LongDirectory *lentry;
     FAT32_Directory *entry;
     FAT32_inode_info * finode = (FAT32_inode_info*)parent_inode->private_index_info;
     FAT32_sb_info * fsb_info = parent_inode->sb->private_sb_info;
 
     char * disk_buf = kmalloc(fsb_info->byte_per_clus, 0);
 
+    if(!disk_buf) return NULL;
     clus = finode->first_cluster & (~0xf0000000);
 
-    while(clus != 0){
+    while(clus > 0){
         lba = CLUS_TO_LBA(fsb_info->fst_data_sector, clus, fsb_info->sec_per_clus);
-        ide_transfer(ATA_READ_CMD, lba, fsb_info->sec_per_clus, (unsigned char*)disk_buf);
+        if(!ide_transfer(ATA_READ_CMD, lba, fsb_info->sec_per_clus, (unsigned char*)disk_buf)){ kfree(disk_buf); return NULL; }
         entry = (FAT32_Directory*)disk_buf;
 
         for(unsigned long i = 0; i < fsb_info->byte_per_clus / sizeof(FAT32_Directory); i++){
-            if((entry + i)->dir_attr == ATTR_LONG_NAME){
-                lentry = (FAT32_LongDirectory *)(entry + i);
-
-                for(int k = 0; k < 5; k++)
-                *(lname_buf + ((GetBits(lentry->ldir_ord, 0, 6) - 1) * 13) + k) = (char)(lentry->ldir_name1[k] & 0xff);
-                for(int k = 0; k < 6; k++)
-                *(lname_buf + ((GetBits(lentry->ldir_ord, 0, 6) - 1) * 13) + k + 5) = (char)(lentry->ldir_name2[k] & 0xff);
-                for(int k = 0; k < 2; k++)
-                *(lname_buf + ((GetBits(lentry->ldir_ord, 0, 6) - 1) * 13) + k + 11) = (char)(lentry->ldir_name3[k] & 0xff);
-                if(GetBits(lentry->ldir_ord, 6, 1))
-                lname_buf[((GetBits(lentry->ldir_ord, 0, 6) - 1) * 13) + 13] = '\0';
-
-            }else{
-                if(lname_buf[0]){
-                    if(!strcmp(dir->name, lname_buf)) goto found_target_dir;
-                }else{
-                    fsde(sname_buf, (entry+i)->dir_name);
-                    fdn2sde(lname_buf, dir->name);
-                    if(!strcmp(lname_buf, sname_buf)) goto found_target_dir;
-                }
-                memset(lname_buf, 0, 256);
+            FAT32_Directory *item = entry + i;
+            if(!item->dir_name[0]){ kfree(disk_buf); return NULL; }
+            if(item->dir_name[0] == 0xe5){ lname_buf[0] = 0; continue; }
+            if(item->dir_attr == ATTR_LONG_NAME){
+                long_filename_part(lname_buf, (FAT32_LongDirectory *)item);
+                continue;
             }
-
-            continue;
-
-            found_target_dir:{
+            short_filename(item, sname_buf);
+            if((item->dir_attr & 8) ||
+               (!filename_equal(dir->name, lname_buf) && !filename_equal(dir->name, sname_buf))){
+                lname_buf[0] = 0;
+                continue;
+            }
+            {
                 index_node * tnode = (index_node *)kmalloc(sizeof(index_node), 0);
+                if(!tnode){ kfree(disk_buf); return NULL; }
                 memset(tnode, 0, sizeof(index_node));
+                tnode->ino = (clus << 16) | i;
                 tnode->f_ops = &FAT32_f_ops;
                 tnode->inode_ops = &FAT32_inode_ops;
                 tnode->sb = fsb;
                 tnode->file_size = (entry + i)->dir_file_size;
                 
-                tnode->attribute = ((entry + i)->dir_attr == ATTR_DIRECTORY) ? FS_ATTR_DIR : FS_ATTR_FILE;
+                tnode->attribute = ((entry + i)->dir_attr & ATTR_DIRECTORY) ? FS_ATTR_DIR : FS_ATTR_FILE;
 
                 tnode->blocks = (tnode->file_size + fsb_info->byte_per_clus - 1) >> BYTE_PER_VSEC_SHIFT;
                 FAT32_inode_info* tinfo = (FAT32_inode_info*)kmalloc(sizeof(FAT32_inode_info), 0);
-                memset(tnode, 0, sizeof(FAT32_inode_info));
+                if(!tinfo){ kfree(tnode); kfree(disk_buf); return NULL; }
+                memset(tinfo, 0, sizeof(*tinfo));
                 tinfo->first_cluster = ((entry + i)->dir_fst_clus_hi << 16) + (entry + i)->dir_fst_clus_lo;
                 tinfo->create_date = (entry + i)->dir_crt_Date;
                 tinfo->create_time = (entry + i)->dir_crt_time;
@@ -213,7 +236,7 @@ dir_entry* fat32_lookup(index_node* parent_inode, dir_entry * dir){
 
         }
 
-        clus = fat32_table_read(fsb_info, clus);
+        clus = next_cluster(fsb_info, clus);
     }
 
     kfree(disk_buf);
@@ -232,280 +255,149 @@ int fat32_open(index_node * inode, file * filp){
 
 int fat32_readdir(file *filp, char *buf, filldir_t filler){
 
-    unsigned long lba = 0;
-    long res = 0;
-    char name_buf[256] = {0};
-    int nl = 0;
-    FAT32_Directory * t_dir = NULL;
-    FAT32_LongDirectory * t_ldir = NULL;
-
-    FAT32_inode_info * inode_info = filp->dentry->dir_node->private_index_info;
-    FAT32_sb_info * sb_info = filp->dentry->dir_node->sb->private_sb_info;
-    
-    char *disk_buf = kmalloc(sb_info->byte_per_clus, 0);
-
-    unsigned long clus  = inode_info->first_cluster;
-
-    for(int i = 0; i < filp->position / sb_info->byte_per_clus; i++){
-        clus = fat32_table_read(sb_info, clus);
-        if(!clus){
-            ColorPrintfk(RED, BLACK, "FAT32 FS(readdri) clus did not exist");
-            return 0;
+    FAT32_inode_info *info = filp->dentry->dir_node->private_index_info;
+    FAT32_sb_info *sb = filp->dentry->dir_node->sb->private_sb_info;
+    unsigned long size = sb->byte_per_clus;
+    long cluster = info->first_cluster & 0x0fffffff;
+    char *block = kmalloc(size, 0);
+    if(!block) return -ENOMEM;
+    char name[256] = {0};
+    int rc = 0;
+    for(long skip = filp->position / size; skip && cluster > 0; skip--)
+        cluster = next_cluster(sb, cluster);
+    while(cluster > 0){
+        unsigned long lba = CLUS_TO_LBA(sb->fst_data_sector, cluster, sb->sec_per_clus);
+        if(!ide_transfer(ATA_READ_CMD, lba, sb->sec_per_clus, (unsigned char *)block)){
+            rc = -EIO;
+            break;
         }
-    }
-
-    while(clus){
-        lba = CLUS_TO_LBA(sb_info->fst_data_sector, clus, sb_info->sec_per_clus);
-        res = ide_transfer(ATA_READ_CMD, lba, 1, disk_buf);
-
-        if(!res){
-            ColorPrintfk(RED, BLACK, "Error in reading dir entry");
-            kfree(disk_buf);
-            return 0;
-        }
-
-        for(int i = (filp->position % sb_info->byte_per_clus) / sizeof(FAT32_Directory); i < sb_info->byte_per_clus / sizeof(FAT32_Directory); i++){
-
-            t_dir = (FAT32_Directory *)disk_buf + i;
-
-            if(t_dir->dir_name[0] == 0xe5 || t_dir->dir_name[0] == 0x05 || t_dir->dir_name[0] == 0x00){
-                filp->position += sizeof(FAT32_Directory);
+        for(unsigned long off = filp->position % size; off < size; off += sizeof(FAT32_Directory)){
+            FAT32_Directory *e = (FAT32_Directory *)(block + off);
+            if(!e->dir_name[0]) goto out;
+            filp->position += sizeof(*e);
+            if(e->dir_name[0] == 0xe5){ name[0] = 0; continue; }
+            if(e->dir_attr == ATTR_LONG_NAME){
+                long_filename_part(name, (FAT32_LongDirectory *)e);
                 continue;
             }
-
-            if(t_dir->dir_attr == ATTR_LONG_NAME){
-                
-                t_ldir = (FAT32_LongDirectory *)t_dir;
-                for(int k = 0; k < 5; k++)
-                *(name_buf + ((GetBits(t_ldir->ldir_ord, 0, 6) - 1) * 13) + k) = (char)(t_ldir->ldir_name1[k] & 0xff);
-                for(int k = 0; k < 6; k++)
-                *(name_buf + ((GetBits(t_ldir->ldir_ord, 0, 6) - 1) * 13) + k + 5) = (char)(t_ldir->ldir_name2[k] & 0xff);
-                for(int k = 0; k < 2; k++)
-                *(name_buf + ((GetBits(t_ldir->ldir_ord, 0, 6) - 1) * 13) + k + 11) = (char)(t_ldir->ldir_name3[k]& 0xff);
-                if(GetBits(t_ldir->ldir_ord, 6, 1))
-                name_buf[((GetBits(t_ldir->ldir_ord, 0, 6) - 1) * 13) + 13] = '\0';
-                filp->position += sizeof(FAT32_Directory);
-
-                if(!GetBits(t_ldir->ldir_ord, 6, 1)) continue;
-
-            }else{
-
-                if(name_buf[0]){
-                    filp->position += sizeof(FAT32_Directory);
-                    goto find_dir_success;
-                }else{
-                    int base = 0, ext = 0, j = 0;
-                    char base_buf[9] = {0}, ext_buf[4] = {0};
-                    for(j = 0;j < 8; j++){
-                        if(t_dir->dir_name[j] == ' ') break;
-                        base_buf[base++] = t_dir->dir_name[j];
-                    }
-                    base_buf[base] = '\0';
-
-                    if(GetBits(t_dir->dir_ntres, 3, 1)) lower_case(base_buf); 
-
-                    for(j = 8; j < 11; j++){
-                        if(t_dir->dir_name[j] == ' ') break;
-                        ext_buf[ext++] = t_dir->dir_name[j];
-                    }
-
-                    ext_buf[ext] = '\0';
-
-                    if(GetBits(t_dir->dir_ntres, 4, 1)) lower_case(name_buf+base);
-
-
-                    filp->position += sizeof(FAT32_Directory);
-
-                    memcopy(base_buf, name_buf, base);
-                    if(ext){
-                        name_buf[base++] = '.';
-                        memcopy(ext_buf, name_buf+base, ext);
-                    }
-
-                    nl = base + ext;
-
-                    name_buf[nl] = '\0';
-
-                    goto find_dir_success;
-                }
-            }
+            if(e->dir_attr & 8){ name[0] = 0; continue; }
+            if(!name[0]) short_filename(e, name);
+            rc = filler(buf, name, StringLen(name), 0, 0);
+            goto out;
         }
-
-        clus = fat32_table_read(sb_info, clus);
-
-        continue;
-
-        find_dir_success:{
-            kfree(disk_buf);
-            nl = nl ? nl : StringLen(name_buf);
-            return filler(buf, name_buf, nl, 0, 0);
-        }
+        cluster = next_cluster(sb, cluster);
     }
-
-    read_dir_over:
-        kfree(disk_buf);
-        return 0;
+    if(cluster < 0) rc = cluster;
+out:
+    kfree(block);
+    return rc;
 }
 
-int fat32_read(file * filp, char * buf, unsigned long count, long * position){
-    long errno;
-    unsigned long remainder;
-    unsigned long lba;
-    int ret_val;
-    unsigned long length;
-    FAT32_inode_info * inode_info = filp->dentry->dir_node->private_index_info;
-    FAT32_sb_info * sb_info = filp->dentry->dir_node->sb->private_sb_info;
-    unsigned long byte_per_clus = sb_info->byte_per_clus;
-    unsigned long offset = *position % byte_per_clus;
-    unsigned long index = 0;
-    unsigned long clus = inode_info->first_cluster + (*position / byte_per_clus);
-
-    if(*position + count > filp->dentry->dir_node->file_size)
-        remainder = filp->dentry->dir_node->file_size - *position;
-    else
-        remainder = count;
-
-    unsigned char * buffer = kmalloc(byte_per_clus, 0);
-
-    do{
-        lba = CLUS_TO_LBA(sb_info->fst_data_sector, clus, sb_info->sec_per_clus);
-        errno = ide_transfer(ATA_READ_CMD, lba, sb_info->sec_per_clus, buffer);
-        if(!errno){
-            ret_val = -EIO;
-            break;
+static long append_cluster(FAT32_sb_info *sb, unsigned long prev){
+    long next = find_free_cluster(sb);
+    if(next < 0) return next;
+    int rc = set_cluster(sb, next, 0x0fffffff);
+    if(rc) return rc;
+    if(prev){
+        rc = set_cluster(sb, prev, next);
+        if(rc){
+            set_cluster(sb, next, 0);
+            return rc;
         }
-        
-        length = min(remainder, byte_per_clus);
-        length = min(byte_per_clus - offset, length);
+    }
+    return next;
+}
 
-        if(buf + offset < TASK_SIZE)
-            copy_to_user(buffer + offset, buf + index, length);
-        else
-            memcopy(buffer + offset, buf + index, length);
-
-        remainder -= length;
-        index += length;
+static int fat32_file_io(file *filp, char *buf, unsigned long count, long *position, int write){
+    index_node *inode = filp->dentry->dir_node;
+    FAT32_inode_info *info = inode->private_index_info;
+    FAT32_sb_info *sb = inode->sb->private_sb_info;
+    unsigned long size = sb->byte_per_clus;
+    if(*position < 0 || (unsigned long)*position > inode->file_size) return write ? -EINVAL : 0;
+    if(write && count && *position == 0xffffffffUL) return -EFBIG;
+    if(write) count = min(count, 0xffffffffUL - *position);
+    else count = min(count, inode->file_size - *position);
+    if(!count) return 0;
+    char *block = kmalloc(size, 0);
+    if(!block) return -ENOMEM;
+    long cluster = info->first_cluster & 0x0fffffff;
+    unsigned long prev = 0;
+    for(unsigned long n = (unsigned long)*position / size; n && cluster > 0; n--){
+        prev = cluster;
+        cluster = next_cluster(sb, cluster);
+    }
+    unsigned long done = 0;
+    unsigned long offset = (unsigned long)*position % size;
+    int err = -EIO;
+    while(done < count){
+        if(cluster < 0){ err = cluster; break; }
+        if(!cluster){
+            if(!write || (unsigned long)*position + done < inode->file_size) break;
+            cluster = append_cluster(sb, prev);
+            if(cluster < 0){ err = cluster; break; }
+            if(!prev) info->first_cluster = cluster;
+            memset(block, 0, size);
+        }else{
+            unsigned long lba = CLUS_TO_LBA(sb->fst_data_sector, cluster, sb->sec_per_clus);
+            if(!ide_transfer(ATA_READ_CMD, lba, sb->sec_per_clus, (unsigned char *)block)) break;
+        }
+        unsigned long bytes = min(size - offset, count - done);
+        if(write){
+            memcopy(buf + done, block + offset, bytes);
+            unsigned long lba = CLUS_TO_LBA(sb->fst_data_sector, cluster, sb->sec_per_clus);
+            if(!ide_transfer(ATA_WRITE_CMD, lba, sb->sec_per_clus, (unsigned char *)block)) break;
+        }else{
+            memcopy(block + offset, buf + done, bytes);
+        }
+        done += bytes;
         offset = 0;
-        clus = fat32_table_read(sb_info, clus);
-    }while(remainder && clus);
-
-    *position += index;
-
-    kfree(buffer);
-    if(!remainder){
-        ret_val = index;
+        if(done < count){
+            prev = cluster;
+            cluster = next_cluster(sb, cluster);
+        }
     }
-    return ret_val;
+    if(write && (unsigned long)*position + done > inode->file_size){
+        unsigned long old_size = inode->file_size;
+        inode->file_size = *position + done;
+        err = fat32_write_inode(inode);
+        if(err){
+            inode->file_size = old_size;
+            done = old_size - *position;
+        }
+    }
+    *position += done;
+    kfree(block);
+    return done ? (int)done : err;
 }
 
-int fat32_write(file * filp, char * buf, unsigned long count, long * position){
-    long errno;
-    unsigned long remainder;
-    unsigned long lba;
-    int ret_val;
-    unsigned long length;
-    FAT32_inode_info * inode_info = filp->dentry->dir_node->private_index_info;
-    FAT32_sb_info * sb_info = filp->dentry->dir_node->sb->private_sb_info;
-    unsigned long byte_per_clus = sb_info->byte_per_clus;
-    unsigned long offset = *position % byte_per_clus;
-    unsigned long index = 0;
-    unsigned long clus = inode_info->first_cluster + (*position / byte_per_clus);
-
-    remainder = count;
-    // if(*position + count > filp->dentry->dir_node->file_size)
-    //     remainder = filp->dentry->dir_node->file_size - *position;
-    // else
-    //     remainder = count;
-
-    unsigned char * buffer = kmalloc(byte_per_clus, 0);
-
-    if(!clus){
-        clus = fat32_find_next_avaliale_cluster(sb_info);
-        if(!clus) {
-            kfree(buffer);
-            return -ENOSPC;
-        }
-        inode_info->first_cluster = clus;
-        filp->dentry->dir_node->sb->sb_ops->write_inode(filp->dentry->dir_node);
-        fat32_table_write(sb_info, clus, 0xffffff8);
-    }
-
-    lba = CLUS_TO_LBA(sb_info->fst_data_sector, clus, sb_info->sec_per_clus);
-    errno = ide_transfer(ATA_READ_CMD, lba, sb_info->sec_per_clus, buffer);
-    if(!errno){
-        return -EIO;
-    }
-
-    do{
-        length = min(remainder, byte_per_clus);
-        length = min(byte_per_clus - offset, length);
-        // length = offset && ((byte_per_clus - offset) > length) ? length : length;
-
-        if(buf + offset < TASK_SIZE)
-            copy_from_user(buf + index, buffer + offset, length);
-        else
-            memcopy(buf + index, buffer + offset, length);
-
-        errno = ide_transfer(ATA_WRITE_CMD, lba, sb_info->sec_per_clus, buffer);
-        if(!errno){
-            ret_val = -EIO;
-            break;
-        }
-
-        remainder -= length;
-        index += length;
-        offset = 0;
-        clus = fat32_table_read(sb_info, clus);
-
-    }while(remainder && clus);
-
-    *position += index;
-
-    kfree(buffer);
-    if(*position > filp->dentry->dir_node->file_size){
-        filp->dentry->dir_node->file_size = *position;
-        filp->dentry->dir_node->sb->sb_ops->write_inode(filp->dentry->dir_node);
-    }
-    if(!remainder){
-        ret_val = index;
-    }
-    return ret_val;
-
+int fat32_read(file *filp, char *buf, unsigned long count, long *position){
+    return fat32_file_io(filp, buf, count, position, 0);
 }
-int fat32_close(index_node * inode, file * filp){}
-int fat32_lseek(file * filp, long offset, long origin){
 
-    unsigned long pos;
-    switch (origin){
-    case SEEK_SET:
-        pos = offset;
-        break;
-    case SEEK_CUR:
-        pos = filp->position + offset;
-        break;
-    case SEEK_END:
-        pos = filp->dentry->dir_node->file_size + offset;
-        break;
-    default:
-        ColorPrintfk(RED, BLACK, "unknown whence\n");
-        return -EINVAL;
-    }
+int fat32_write(file *filp, char *buf, unsigned long count, long *position){
+    return fat32_file_io(filp, buf, count, position, 1);
+}
 
-    if(pos > filp->dentry->dir_node->file_size || pos < 0)
-        return -EOVERFLOW;
-
+int fat32_close(index_node *inode, file *filp){ return 0; }
+long fat32_lseek(file *filp, long offset, long origin){
+    long base = 0;
+    if(origin == SEEK_CUR) base = filp->position;
+    else if(origin == SEEK_END) base = filp->dentry->dir_node->file_size;
+    else if(origin != SEEK_SET) return -EINVAL;
+    long pos;
+    if(__builtin_add_overflow(base, offset, &pos) || pos < 0 ||
+       (unsigned long)pos > filp->dentry->dir_node->file_size) return -EOVERFLOW;
     filp->position = pos;
-    ColorPrintfk(GREEN, BLACK, "filp->position: %d\n", pos);
     return pos;
 }
-int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg){}
+int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg){ return -ENOTTY; }
 
 super_block * fat32_read_superblock(disk_partition_table_entry *dpte, void *buf){
 
     fsb = (super_block *)kmalloc(sizeof(super_block), 0);
     fsb->sb_ops = &FAT32_sb_ops;
 
-    FAT32_sb_info * private_sb_info = (FAT32_sb_info*)kmalloc(sizeof(FAT32_FSInfo), 0);
+    FAT32_sb_info * private_sb_info = kmalloc(sizeof(*private_sb_info), 0);
     disk_boot_sector *fbs    = (disk_boot_sector*)buf;
 
     private_sb_info->byte_per_clus          = fbs->BPB_SecsPerClus * fbs->BPB_BytesPerSec;
@@ -541,6 +433,7 @@ super_block * fat32_read_superblock(disk_partition_table_entry *dpte, void *buf)
 
     index_node *inode   = (index_node*)kmalloc(sizeof(index_node), 0);
 
+    memset(inode, 0, sizeof(*inode));
     inode->attribute    = FS_ATTR_DIR;
     inode->blocks       = 0;
     inode->f_ops        = &FAT32_f_ops;
@@ -580,20 +473,49 @@ void fat32_put_superblock(super_block * lsb){
     kfree(lsb);
 }
 
-void fat32_write_inode(index_node * inode){
+int fat32_write_inode(index_node *inode){
     FAT32_inode_info * inode_info = (FAT32_inode_info *)inode->private_index_info;
-    FAT32_sb_info * sb_info = fsb->private_sb_info;
+    FAT32_sb_info * sb_info = inode->sb->private_sb_info;
     FAT32_Directory * buf = kmalloc(sb_info->byte_per_clus, 0);
-    ide_transfer(ATA_READ_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
-    FAT32_Directory * tentry = (FAT32_Directory *)(buf + inode_info->dentry_position);
+    if(!buf) return -ENOMEM;
+    unsigned long lba = CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus);
+    if(!ide_transfer(ATA_READ_CMD, lba, sb_info->sec_per_clus, (unsigned char *)buf)){
+        kfree(buf);
+        return -EIO;
+    }
+    FAT32_Directory * tentry = buf + inode_info->dentry_position;
     tentry->dir_file_size = inode->file_size;
     tentry->dir_fst_clus_hi = GetBits(inode_info->first_cluster, 16, 16);
     tentry->dir_fst_clus_lo = GetBits(inode_info->first_cluster, 0, 16);
     tentry->dir_wrt_date = inode_info->write_date;
     tentry->dir_wrt_time = inode_info->write_time;
 
-    ide_transfer(ATA_WRITE_CMD, CLUS_TO_LBA(sb_info->fst_data_sector, inode_info->dentry_location, sb_info->sec_per_clus), sb_info->sec_per_clus, (unsigned char *)buf);
+    int ok = ide_transfer(ATA_WRITE_CMD, lba, sb_info->sec_per_clus, (unsigned char *)buf);
     kfree(buf);
+    return ok ? 0 : -EIO;
+}
+
+int fat32_truncate(index_node *inode){
+    FAT32_inode_info *info = inode->private_index_info;
+    FAT32_sb_info *sb = inode->sb->private_sb_info;
+    long cluster = info->first_cluster;
+    unsigned long old_size = inode->file_size;
+    info->first_cluster = 0;
+    inode->file_size = 0;
+    int rc = fat32_write_inode(inode);
+    if(rc){
+        inode->file_size = old_size;
+        info->first_cluster = cluster;
+        return rc;
+    }
+    while(cluster > 0){
+        long next = next_cluster(sb, cluster);
+        if(next < 0) return next;
+        rc = set_cluster(sb, cluster, 0);
+        if(rc) return rc;
+        cluster = next;
+    }
+    return 0;
 }
 
 

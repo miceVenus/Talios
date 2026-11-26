@@ -1,12 +1,11 @@
 #include "linkage.h"
 
-.text 
+.section .text.boot,"ax"
 
 .global     __start
 
 __start:
 
-    movq    $1  ,   global_pid(%rip)
     mov     $SelectorData64,    %rax
 
     mov     %rax,    %ds
@@ -26,11 +25,6 @@ __start:
     movq    $0x101000,  %rax  # PML4 table physic address
     movq    %rax,   %cr3
 
-
-    movq    $0x1b,  %rcx
-    rdmsr
-    bt      $8, %rax
-    jnc     smp_entry
 
     movq    switch_seg(%rip),  %rax
     pushq   $0x8
@@ -156,19 +150,57 @@ ignore_IDT:
 
     iretq
 
-smp_entry:
-
+/* The trampoline jumps here in the high half using the loader's CR3.
+ * The kernel root has no low identity mapping once TaskInit has run. */
+.global ap_entry64
+ap_entry64:
+    movq    $0x101000, %rax
+    movq    %rax, %cr3
+    lgdt    GdtPtr(%rip)
     lidt    IdtPtr(%rip)
-
-    movq    _stack_start(%rip),    %rsp
-    
-    movq    go_to_smp_kernel(%rip), %rax
+    xorl    %eax, %eax
+    cpuid
+    cmpl    $0xb, %eax
+    jb      .Lap_legacy_id
+    movl    $0xb, %eax
+    xorl    %ecx, %ecx
+    cpuid
+    testl   %ebx, %ebx
+    jnz     .Lap_id
+.Lap_legacy_id:
+    movl    $1, %eax
+    cpuid
+    movl    %ebx, %edx
+    shrl    $24, %edx
+.Lap_id:
+    leaq    smp_apic_ids(%rip), %rsi
+    xorl    %edi, %edi
+.Lfind_cpu:
+    cmpl    smp_cpu_count(%rip), %edi
+    jae     .Lunknown_cpu
+    cmpl    (%rsi,%rdi,4), %edx
+    je      .Lap_stack
+    incl    %edi
+    jmp     .Lfind_cpu
+.Lunknown_cpu:
+    hlt
+    jmp     .Lunknown_cpu
+.Lap_stack:
+    leaq    smp_stack_tops(%rip), %rsi
+    movq    (%rsi,%rdi,8), %rsp
+    movl    $0x10, %eax
+    movw    %ax, %ss
+    movw    %ax, %ds
+    movw    %ax, %es
+    movw    %ax, %fs
+    movw    %ax, %gs
     pushq   $0x08
+    leaq    .Lap_cs(%rip), %rax
     pushq   %rax
     lretq
-
-go_to_smp_kernel:
-    .quad   start_smp
+.Lap_cs:
+    call    start_smp
+    jmp     .Lunknown_cpu
 
 # Page Table
 

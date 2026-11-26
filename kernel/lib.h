@@ -51,6 +51,16 @@ typedef unsigned char uint8_t;
     temp = GetCr3();    \
     SetCr3(temp);})
 
+static inline unsigned long irq_save(void){
+    unsigned long flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static inline void irq_restore(unsigned long flags){
+    if(flags & (1UL << 9)) sti();
+}
+
 
 #define DoDiv(num, base) ({\
         int __res; \
@@ -74,10 +84,8 @@ typedef unsigned char uint8_t;
 #define max(value1, value2) ((value1) >= (value2) ? (value1) : (value2))
 #define min(value1, value2) ((value1) >= (value2) ? (value2) : (value1))
 
-#define ContainerOf(ptr, type, member)   ({                             \
-    typeof(ptr) p = (ptr);                                              \
-    (type *)((unsigned long)p - (unsigned long)&(((type *)0)->member));  \
-})
+#define ContainerOf(ptr, type, member) \
+    ((type *)((char *)(ptr) - __builtin_offsetof(type, member)))
 
 struct List{
     struct List *prev;
@@ -124,20 +132,18 @@ static inline void port_insw(void *buffer, unsigned int port, unsigned long num)
 }
 
 static inline void port_outsw(void *buffer, unsigned int port, unsigned long num){
-    __asm__ volatile("rep outsw":"+D"(buffer), "+c"(num):"d"(port):"memory");
+    __asm__ volatile("rep outsw":"+S"(buffer), "+c"(num):"d"(port):"memory");
 }
 
 
 // verified if area is in user space (return 1)
 static inline long verify_area(unsigned char * area, unsigned long size){
-    if((unsigned long)area + size <= (unsigned long)0x00007fffffffffff)
-        return 1;
-    else 
-        return 0;
+    unsigned long addr = (unsigned long)area;
+    return addr < (1UL << 47) && size <= (1UL << 47) - addr;
 }
 
 inline struct List* list_search(const struct List *head, const struct List *tar){
-    const struct List *ptr = head->next;
+    struct List *ptr = head->next;
     while(ptr != head){
         if(ptr == tar) return ptr;
         ptr = ptr->next;
@@ -214,10 +220,10 @@ void    upper_case(char *str);
 void    lower_case(char *str);
 int     strcmp(char *str1, char *str2);
 
-long    copy_from_user(void * from, void * to, unsigned long size);
+long    copy_from_user(const void *from, void *to, unsigned long size);
 long    copy_to_user(void * from, void * to, unsigned long size);
 
-long    strncpy_from_user(char * src, char * dst, unsigned long size);
-long    strnlen_user(char * src, unsigned long size);
+long    strncpy_from_user(const char *src, char *dst, unsigned long size);
+long    strnlen_user(const char *src, unsigned long size);
 
 #endif

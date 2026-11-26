@@ -38,10 +38,11 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
     int BufferLen = VsPrintfk(buffer, fmt, args);  // used for formatting string unsafe
 
     va_end(args);
+    unsigned long irq = spin_lock_irqsave(&screenInfo.lock);
+#ifdef TALIOS_DEBUG_E9
+    for(int i = 0; i < BufferLen; i++) OUT8b(0xe9, buffer[i]);
+#endif
 
-    if(get_rflags() & 0x200UL){
-        spin_lock(&screenInfo.lock);
-    }
 
     for(int i = 0, Offset; i < BufferLen; i++){
 
@@ -81,9 +82,7 @@ int ColorPrintfk(int ForeColor, int BackColor, const char* fmt, ...) {
             AutoPutchar(buffer[i], ForeColor, BackColor);
         }
     }
-    if(get_rflags() & 0x200UL){
-        spin_unlock(&screenInfo.lock);
-    }
+    spin_unlock_irqrestore(&screenInfo.lock, irq);
 
     return 0;
 }

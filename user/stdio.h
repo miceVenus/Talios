@@ -7,7 +7,7 @@
 
 int putstring(char *string);
 
-int brk(unsigned long brk);
+long brk(unsigned long brk);
 
 int printf(const char * restrict format, ...);
 

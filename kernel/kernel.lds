@@ -9,7 +9,7 @@ SECTIONS
 
     .text : {
         _text = .;
-        build/head.o(__start)
+        KEEP(*(.text.boot))
         *(.text*)
         _etext = .;
     }

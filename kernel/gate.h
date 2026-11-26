@@ -7,7 +7,7 @@
 
 #define LTR(n) do{\
     unsigned long TR;\
-    unsigned long Selector = (n << 3);\
+    unsigned long Selector = ((n) << 3);\
     __asm__ volatile("str %0" : "=r"(TR));\
     if(TR != Selector) __asm__ volatile("ltr %%ax"::"a"(Selector):"memory");\
 } while(0)

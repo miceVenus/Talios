@@ -94,6 +94,7 @@ super_block * fat32_read_superblock(disk_partition_table_entry *dpte, void *buf)
 
 // dentry op
 int fat32_create(index_node * inode, dir_entry * dir, int mode);
+int fat32_truncate(index_node *inode);
 int fat32_mkdir(index_node * inode, dir_entry * dir, int mode);
 int fat32_rmdir(index_node * inode, dir_entry * dir);
 int fat32_rename(index_node * old_inode, dir_entry * old_dentry, index_node * new_inode, dir_entry * new_dentry);
@@ -113,13 +114,13 @@ int fat32_open(index_node * inode, file * filp);
 int fat32_read(file * filp, char * buf, unsigned long count, long * position);
 int fat32_write(file * filp, char * buf, unsigned long count, long * position);
 int fat32_close(index_node * inode, file * filp);
-int fat32_lseek(file * filp, long offset, long origin);
+long fat32_lseek(file * filp, long offset, long origin);
 int fat32_ioctl(index_node * inode, file * filp, unsigned long cmd, unsigned long arg);
 int fat32_readdir(file * filp, char *buf, filldir_t filler);
 
 // super block op
 void fat32_write_superblock(super_block * lsb);
 void fat32_put_superblock(super_block * lsb);
-void fat32_write_inode(index_node * inode);
+int fat32_write_inode(index_node *inode);
 
 #endif

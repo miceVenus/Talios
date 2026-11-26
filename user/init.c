@@ -1,4 +1,4 @@
-__asm__ ("jmp main \n\t");
+__asm__ (".pushsection .text.entry,\"ax\"\n jmp main\n .popsection");
 
 #include "fcntl.h"
 #include "stdio.h"
@@ -8,7 +8,7 @@ __asm__ ("jmp main \n\t");
 #include "dirent.h"
 #include "sys.h"
 
-char *current_dir = NULL;
+static char current_dir[4096];
 
 typedef struct buildin_cmd{
     char *name;
@@ -25,7 +25,6 @@ int cd_command(int argc, char **argv){
 
     char *path = NULL;
 
-    unsigned long res = 0;
     unsigned long len = strlen(current_dir);
 
     if(argc < 2) return -1;
@@ -35,17 +34,18 @@ int cd_command(int argc, char **argv){
     if(strcmp(argv[1], "..") == 0){
         if(strcmp("/", current_dir) == 0) return 1;
 
-        for(i = len - 1; i >= 0; i++){
+        for(i = len - 1; i > 0; i--){
             if(current_dir[i] == '/') break;
         }
 
-        current_dir[i] = '\0';
+        current_dir[i ? i : 1] = '\0';
         return 1;
     }
 
     i = len + strlen(argv[1]);
-
+    if((unsigned long)i + 2 > sizeof(current_dir)) return -1;
     path = (char *)malloc(i + 2);
+    if(!path) return -1;
     memset(path, 0, i+2);
 
     strcpy(current_dir, path);
@@ -74,6 +74,7 @@ int ls_command(int argc, char **argv){
     dirent * buf= NULL;
 
     t_dir = opendir(current_dir);
+    if(!t_dir) return -1;
 
     while(1){
         buf = readdir(t_dir);
@@ -87,8 +88,8 @@ int ls_command(int argc, char **argv){
 }
 
 int pwd_command(int argc, char **argv){
-    if(current_dir)
-        printf("%s\n", current_dir);
+    printf("%s\n", current_dir);
+    return 1;
 }
 
 int cat_command(int argc, char **argv){
@@ -99,6 +100,7 @@ int cat_command(int argc, char **argv){
     int len = cd_len + strlen(argv[1]);
 
     char *path = (char *)malloc(len + 2);
+    if(!path) return -1;
 
     memset(path, 0, len + 2);
 
@@ -110,20 +112,19 @@ int cat_command(int argc, char **argv){
     strncat(path, argv[1], strlen(argv[1]) + 1);
 
     int fd = open(path, O_RONLY);
-
-    int i = lseek(fd, 0 ,SEEK_END);
-
-    lseek(fd, 0, SEEK_SET);
-
-    char * buf = (char *)malloc(i + 1);
-    memset(buf, 0, i + 1);
-    len = read(fd, buf, i + 1);
-    printf("length : %d \n %s \n", len, buf);
-
-    close(fd);
-
     free(path);
-    free(buf);
+    if(fd < 0) return -1;
+    long length = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    printf("length : %D\n", length);
+    char buf[513];
+    while((len = read(fd, buf, sizeof(buf) - 1)) > 0){
+        buf[len] = 0;
+        putstring(buf);
+    }
+    putstring("\n");
+    close(fd);
+    return len < 0 ? -1 : 1;
 }
 
 int touch_command(int argc, char **argv){
@@ -173,16 +174,16 @@ int find_cmd(char *cmd){
     return -1;
 }
 
-int read_line(int fd, char *buf){
+int read_line(int fd, char *buf, int capacity){
 
     int key = 0;
     int count = 0;
 
     while(1){
         key = AnalyzeKeyCode(fd);
-        if(key == '\n') return count;
+        if(key == '\n'){ buf[count] = 0; return count; }
 
-        if(key){
+        if(key && count < capacity - 1){
             buf[count++] = (char)key;
             printf("%c",key);
         }
@@ -191,32 +192,17 @@ int read_line(int fd, char *buf){
 }
 
 int parse_command(char *buf, int *argc, char ***argv){
-    int i, j = 0;
-
-    while(buf[j] == ' ') j++;
-
-    for(i = j; i < 256; i++){
-        if(!buf[i]) break;
-
-        if(buf[i] != ' ' && (buf[i+1] == ' ' || buf[i+1] == '\0')){
-            (*argc)++;
-        }
+    *argc = 0;
+    for(char *p = buf; *p; p++){
+        if(*p != ' ' && (p == buf || p[-1] == ' ')) (*argc)++;
     }
-
-    printf("parse_command argc:%d\n", *argc);
-
-    if(!(*argc)){
-        return -1;
-    }
-
-    *argv = (char **)malloc(sizeof(char **) * (*argc));
-
-    for(i = 0; i < *argc && j < 256; i++){
-        *(*argv + i) = &buf[j];
-        while(buf[j] != ' ' && buf[j] != '\0') j++;
-        buf[j++] = '\0';
-        while(buf[j] == ' ') j++;
-        printf("%s\n", (*argv)[i]);
+    if(!*argc) return -1;
+    *argv = malloc(sizeof(**argv) * *argc);
+    if(!*argv) return -1;
+    int i = 0;
+    for(char *p = buf; *p; p++){
+        if(*p == ' ') *p = 0;
+        else if(p == buf || !p[-1]) (*argv)[i++] = p;
     }
 
     return find_cmd(**argv);
@@ -229,21 +215,19 @@ void run_command(int index, int argc, char** argv){
 int main(){
 
     char path[] = "/KEYBOARD.DEV";
-    unsigned char buf[256] = {0};
+    char buf[256];
     int index = -1;
 
     int fd = open(path, 0);
 
-    current_dir = malloc(4096);
-    current_dir = "/";
+    current_dir[0] = '/';
+    current_dir[1] = 0;
 
     while(1){
         int argc = 0;
         char **argv = NULL;
         printf("[SHELL]#:");
-        memset(buf, 0, 256);
-
-        read_line(fd, buf);
+        read_line(fd, buf, sizeof(buf));
 
         printf("\n");
 
@@ -253,6 +237,7 @@ int main(){
             printf("Input Error, No Command Found! \n");
         else
             run_command(index, argc, argv);
+        free(argv);
     };
 
     close(fd);

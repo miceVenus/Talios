@@ -20,10 +20,10 @@ void spin_lock_init(SpinLock_T *lock){
 // lock which is not allow re-entrying
 void spin_lock(SpinLock_T *lock){
     preempt_disable();
-    __LOCK(lock);
+    raw_spin_lock(lock);
 }
 
 void spin_unlock(SpinLock_T *lock){
-    __UNLOCK(lock);
+    raw_spin_unlock(lock);
     preempt_enable();
 }

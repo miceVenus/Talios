@@ -10,7 +10,7 @@ Long Mode，初始化基础内核子系统，挂载 FAT32 磁盘镜像，并通�
 - 目标架构：x86-64 / AMD64，内核运行在 IA-32e Long Mode。
 - 启动方式：传统 BIOS 启动。
 - 主要模拟器：Bochs。Makefile 里保留了 QEMU 注释，但当前因为 INT 13h 软盘读扇区问题转向 Bochs。
-- 当前运行形态：默认路径只启动 BSP 单核。SMP 和 x2APIC 相关代码存在，但 `main()` 里 AP 启动循环目前等价关闭。
+- 默认 Bochs 配置提供一个 CPU。内核从 ACPI MADT 或 Intel MP 表发现其他逻辑 CPU，通过 x2APIC 启动它们，最多使用 16 个。
 - 工具链：`gcc-9`、`ld`、`as`、`nasm`、`objcopy`、Bochs 以及 FAT 镜像工具。
 
 目前没有 ARM、RISC-V 或纯 32 位保护模式目标。32 位保护模式只作为启动阶段进入 64 位长模式前的过渡步骤。
@@ -22,6 +22,7 @@ Long Mode，初始化基础内核子系统，挂载 FAT32 磁盘镜像，并通�
 3. `bootloader/loader.asm` 负责加载 `KERNEL.BIN`，开启 A20，读取 BIOS E820 内存布局到 `0x7e00`，设置 VBE 显示模式，构造临时 GDT 和页表，检查 IA-32e 支持，最后跳入 64 位内核。
 4. `kernel/head.S` 重新加载 64 位 GDT/IDT/TSS，切换到内核栈，安装早期页表，然后进入 `main()`。
 5. `kernel/main.c` 初始化 printk、CPU 信息、内存管理、APIC/IRQ、softirq、调度器、键盘、软驱、ATA 磁盘、任务、HPET 和定时器。
+6. BSP 发送 INIT/SIPI，各 AP 装入自己的内核栈、TSS 和系统调用入口后加入调度。BSP 创建第一个内核线程，引导完成时控制台显示实际在线 CPU 数量。
 
 ## 支持的文件系统
 
@@ -37,12 +38,28 @@ Long Mode，初始化基础内核子系统，挂载 FAT32 磁盘镜像，并通�
 - CPU 与描述符：CPUID 输出、GDT、IDT、TSS、trap gate 和异常处理。
 - 中断系统：IRQ 描述符表、APIC/IOAPIC 控制器钩子、IRQ 注册和中断入口桩。
 - 定时器：HPET 中断、CMOS 时间读取、`jiffies`、timer list 和 timer softirq。
-- 内存管理：E820 解析、2 MiB 页分配器、zone/page 元数据、内核页表扩展、slab 风格的 `kmalloc()`/`kfree()` 和用户地址映射辅助函数。
-- 任务与调度：task 结构、上下文切换、按 CPU 划分的调度队列、内核线程、`fork`、`vfork`、`execve` 和简单的 `vrun_time` 记账。
-- 系统调用：`sysenter`/`sysexit` 路径，系统调用表包含 `putstring`、`open`、`close`、`read`、`write`、`lseek`、`fork`、`vfork`、`execve` 和 `brk`。
+- 内存管理以 4 KiB 伙伴分配器管理物理页，并向内核提供连续 2 MiB 块和 slab 对象。用户地址空间通过 VMA 管理堆、程序、栈和映射。
+- 所有 CPU 从全局进程表选择可运行任务，支持定时抢占、进程迁移、内核线程、`fork`、`vfork` 和 `execve`。
+- 系统调用：`sysenter`/`sysexit` 路径，系统调用表包含 `putstring`、`open`、`close`、`read`、`write`、`lseek`、`fork`、`vfork`、`execve`、`brk`、`mmap`、`munmap`、`msync` 和 `exit`。
 - 存储设备：软驱控制器代码、可选 DMA 模式、ATA LBA48 读写请求队列、IRQ 完成处理和 FAT32 集成。
-- 输入设备：PS/2 键盘 IRQ、扫描码缓冲区、修饰键状态和内核主循环里的按键分析。
+- 用户任务可以阻塞读取 PS/2 键盘扫描码。键盘 IRQ 将输入放入缓冲区并唤醒读者。
 - 用户态：简单用户态运行库、系统调用包装、基于 `brk` 的小型 `malloc()`、用户态链接脚本和 demo init 程序。
+
+## 用户虚拟内存
+
+`brk(0)` 返回当前堆顶。扩大堆只登记虚拟地址范围，首次访问时分配清零的 4 KiB 页，缩小时释放已经驻留的页。Talios 的 `brk` 返回按页对齐的堆顶。普通 `fork` 继承 VMA 和已经驻留的页，私有可写页在父进程或子进程第一次写入时分离。内核向用户缓冲区写数据时也遵守 COW。
+
+用户态的 `malloc` 通过 `brk` 按需扩堆。`free` 会合并相邻空闲块，堆尾的整页会归还给内核。
+
+用户程序包含 `user/mman.h` 后，可以用 `MAP_PRIVATE` 或 `MAP_SHARED` 建立匿名映射或 FAT32 普通文件映射。文件偏移量以字节计，须按 4 KiB 对齐。关闭 fd 后映射仍然有效。文件末页内超出长度的字节读作零，访问整个落在文件末尾以外的页会终止当前用户任务。`MAP_FIXED` 替换指定范围，`munmap` 支持部分解除，`msync(addr, len, MS_SYNC)` 可以同步写回共享文件页。
+
+地址空间和映射缓存共用一把可以在等待磁盘 I/O 时睡眠的锁。内核修改驻留页的权限或解除映射时，会向仍在运行该地址空间的其他 CPU 发送 TLB 失效 IPI，收到确认后才回收旧页。普通文件的 `read` 和 `write` 与共享映射看到相同的页内容。
+
+## 多核调度
+
+每个 CPU 选择虚拟运行时间最小的就绪任务。全局表锁保护遍历和选择，任务锁保护 CPU 归属和内核栈交接。调度器在切换前释放表锁，旧任务的锁一直持有到 CPU 在新栈上运行。此后其他 CPU 才能接手旧任务，已退出任务的栈也在这里回收。
+
+HPET 以 100 Hz 触发 BSP，并通过 IPI 驱动其他 CPU 的时间片。新任务从父进程的虚拟运行时间和全局基线中较大的一项起步。阻塞任务唤醒后最多领先基线一个按优先级加权的 tick。每个 CPU 都有自己的空闲任务，检查就绪状态后执行 `sti; hlt`，新工作通过 IPI 唤醒空闲核。
 
 ## 构建和运行
 
@@ -52,10 +69,10 @@ Long Mode，初始化基础内核子系统，挂载 FAT32 磁盘镜像，并通�
 make all
 ```
 
-在 Bochs 中运行：
+在支持 SMP 和 x2APIC 的 Bochs 中启动四个 CPU，省略 `CPUS` 时启动一个。
 
 ```sh
-make run
+make run CPUS=4
 ```
 
 启用 Bochs GDB stub 进行调试：
@@ -65,6 +82,23 @@ make debug
 ```
 
 `assmble.sh` 会通过 `sudo mount` 挂载镜像，把 `loader.bin`、`kernel.bin` 和 `init.bin` 拷贝进 FAT 镜像，并用 `fsck.vfat` 检查 boot 镜像。
+
+运行虚拟内存回归需要 Python 3、`mkfs.fat`、`stdbuf` 和带 `nogui` 插件的 Bochs。
+
+```sh
+make check-vm
+make check-sched
+```
+
+测试在临时目录中编译并生成 FAT12 和 FAT32 镜像，客体内存为 128 MiB。`check-vm` 先引导 shell，再运行虚拟内存回归，最后从宿主镜像核对共享页写回。`check-sched` 默认在 1、2、4 个 CPU 上分别运行上述检查和调度回归。测试内核在切换栈后按硬件 APIC ID 记录各核的当前任务，检查同一任务是否被两个核同时占用。用户进程通过 CPUID 采样实际执行它们的核，并检查公平性、抢占时的 SSE 寄存器和跨进程共享映射写回。阻塞测试覆盖长睡眠唤醒，以及 BSP 从 `hlt` 收到时钟中断后，通过 PS/2 控制器发起的键盘中断。
+
+用 `BOCHS` 指向带 SMP 和 `nogui` 支持的 Bochs 可执行文件。用 `CHECK_CPUS` 选择调度回归的核数。
+
+```sh
+make check-sched BOCHS=/path/to/bochs CHECK_CPUS="2 4"
+```
+
+在 Bochs 3.0 中复现 16 CPU 回归时，如果模拟器启动时报告 `register_timer: too many registered timers`，可将 Bochs 源码 `pc_system.h` 中的 `BX_MAX_TIMERS` 从 64 改为 256 并重新构建。
 
 ## 仓库结构
 
@@ -78,17 +112,15 @@ make debug
 
 ## 尚未实现完毕的地方
 
-- FAT32 元数据操作大多还是空函数或半成品，包括 `create`、`mkdir`、`rmdir`、`rename`、`getattr`、`setattr`、`compare`、`hash`、`release`、`iput`、`close`、`ioctl` 和 superblock 写回。
-- FAT32 读写已有基础 cluster I/O，但 cluster 链扩展、空闲空间统计、目录项创建、文件增长时的元数据同步还不完整。
-- VFS 目前只有最小的全局挂载/root 模型，缺少挂载命名空间、引用计数、缓存回收、权限检查以及完整的 dentry/inode 生命周期管理。
-- `do_fork()` 在代码中被标注为 incomplete。进程退出、wait、信号投递、copy-on-write 和完整子进程清理还没有实现。
-- `execve()` 目前把平坦二进制加载到固定用户虚拟地址，没有 ELF loader、argv/envp、动态链接或按需分页。
-- 用户态堆非常简单：`malloc()` 只是推进 `brk`，`free()` 还是空函数。
-- SMP 仍是部分实现。AP 启动、IPI handler、per-CPU 初始化和调度结构都有代码，但当前 `main()` 默认没有真正拉起 AP。
+- FAT32 已支持普通文件增长、截断和目录项大小更新。目录项创建、重命名、空闲空间统计、通用属性操作和 superblock 写回仍待完善。
+- VFS 使用全局根挂载，文件对象有引用计数，目录项和 inode 的回收仍待完善。
+- 进程退出会释放映射和文件引用，`wait` 和信号投递仍待实现。
+- `execve()` 在固定地址按需映射平坦二进制。ELF、argv/envp 和动态链接仍待实现。
+- 调度器选取任务时会持有全局表锁并线性扫描进程，CPU 数量和可运行任务数量增加时，这段临界区会带来竞争。
 - `interrupt.c` 中 IRQ 处理路径被标为未完成，嵌套中断、抢占、错误处理和控制器边界情况还需要继续加固。
 - framebuffer 控制台只有基础绘制，滚屏、跨行退格、自动分辨率发现和更完整的终端行为还没完成。
 - 磁盘和软驱驱动已经能支持当前镜像 I/O 实验，但 open/close/ioctl、错误恢复、缓存/缓冲区管理和设备发现仍不完整。
-- 目前还没有网络栈、shell、用户/权限模型、IPC、管道、socket 或稳定的内核测试框架。
+- 目前还没有网络栈、用户/权限模型、IPC、管道、socket 或稳定的内核测试框架。
 
 
 ## 内存布局
@@ -142,4 +174,4 @@ make debug
 0x0000_0000_0000_0000  +---------------------------------------+
 ```
 
-这张图描述的是当前代码里的固定布局：内核高半区通过 `PAGE_OFFSET = 0xffff800000000000` 建立直接映射，用户态 demo 还没有 ELF loader 和按需分页，因此 `execve()` 暂时把程序、栈和堆放在固定地址。
+这张图描述的是当前代码里的固定布局：内核高半区通过 `PAGE_OFFSET = 0xffff800000000000` 建立直接映射，用户程序的映像、栈顶和初始堆顶使用固定地址，映射的物理页在首次访问时建立。

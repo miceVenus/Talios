@@ -1,171 +1,157 @@
 #include "smp.h"
-#include "cpu.h"
 #include "apic.h"
-#include "printk.h"
-#include "lib.h"
 #include "gate.h"
-#include "spin_lock.h"
 #include "interrupt.h"
 #include "schedule.h"
+#include "hpet.h"
+#include "mmap.h"
+#include "printk.h"
 
-extern unsigned char _APU_boot_start[];
-extern unsigned char _APU_boot_end[];
+#define IPI_TICK  0xc8
+#define IPI_WAKE  0xc9
+#define IPI_TLB   0xca
+#define AP_BOOT_PHYS 0x20000UL
+
+extern unsigned char _APU_boot_start[], _APU_boot_end[];
 extern struct LocalMemManager InitLmm;
-extern unsigned long _stack_start;
-extern struct TaskStruct* InitTask[NR_CPUS];
-extern union TaskUnion* InitTaskUnions[NR_CPUS];
-extern struct ThreadStruct* InitThreads[NR_CPUS];
+extern struct TssStruct InitTss[NR_CPUS];
+extern union TaskUnion *InitTaskUnions[NR_CPUS];
 
-enum ICR_IDENTIFIER{
-    ICR_NO_SHORTHAND    = 0x00,
-    ICR_SELF_SHORTHAND  = 1,
-    ICR_ALL_SHORTHAND   = 2,
-    ICR_EXCLUDE_ALL_SHORTHAND   = 3,
-    ICR_EDGE_TRIGGE     = 0,
-    ICR_LEVEL_TRIGGE    = 1,
-    ICR_INVALID_LEVEL_TRIGGE  = 1,
-    ICR_VALID_LEVEL_TRIGGE  = 1,
-    ICR_FREE_DELIVERY       = 0,
-    ICR_HANG_DELIVERY       = 1,
-    ICR_PHYSIC_TARGET_MODE  = 0,
-    ICR_LOGICAL_TARGET_MODE = 1,
-    ICR_FIXED_DELIVERY_MODE = 0,
-    ICR_LOWER_PRIORITY_DELIVERY_MODE,
-    ICR_SMI_DELIVERY_MODE,
-    ICR_NMI_DELIVERY_MODE,
-    ICR_INIT_DELIVERY_MODE,
-    ICR_START_UP_DELIVERY_MODE
-};
+unsigned int smp_apic_ids[NR_CPUS], smp_cpu_count = 1;
+unsigned long smp_stack_tops[NR_CPUS];
+static unsigned long online = 1;
+static unsigned long active_root[NR_CPUS];
 
-void ipi_0x200(struct PtRegs *regs, unsigned long nr, unsigned long arg){
+/* Page-table edits are serialized by the VM mutex. Acknowledgements are
+ * sent before an old frame or a page-table page may be reused. */
+static unsigned long flush_root, flush_addr, flush_pending;
 
-    // if(ContainerOf(ListNext(&timer_list_header.list), timer_list, list)->expire_jiffies <= jiffies)
-    // add_softirq_status(TIME_SIRQ);
-
-    struct TaskStruct * current = CURRENT;
-    scheduler *task_scheduler = &task_schedulers[current->cpu_id];
-
-    switch (current->priority){
-        case 0:
-        case 1:
-            task_scheduler->CPU_exec_task_jiffies -= 1;
-            current->vrun_time += 1;
-            break;
-
-        case 2:
-            task_scheduler->CPU_exec_task_jiffies -= 2;
-            current->vrun_time += 2;
-            break;
-    }
-
-    if(task_schedulers[CURRENT->cpu_id].CPU_exec_task_jiffies <= 0){
-            CURRENT->flags |= NEED_SCHEDULE;
+static void send_mask(unsigned int vector, unsigned long mask){
+    while(mask){
+        int cpu = __builtin_ctzl(mask);
+        wrmsr(0x830, ((unsigned long)smp_apic_ids[cpu] << 32) | vector);
+        mask &= mask - 1;
     }
 }
-
-SpinLock_T smp_lock;
-
-void smp_init(){
-    spin_lock_init(&smp_lock);
-    unsigned int eax, ecx, ebx, edx;
-
-    // Get Tapology Structure With Asmblycode CPUID
-
-    for(int i = 0; ; i++){
-        CPUID(0xb, i, &eax, &ebx, &ecx, &edx);
-
-        // eax[4：0] Bit Width
-        // ebx[15:0] logical Processor In Current Level
-        // ecx[15:8] 0 : End Tapology; 1 : SMT ; 3~255 : Core
-        // ecx[7:0]  Max Tapology Level
-        // edx       x2APIC ID In This Logical Processor
-        if(!GetBits(ecx, 8, 8)) break;
-
-        ColorPrintfk(   BLUE, BLACK, "Local APIC ID Package_../Core_2/SMT_1, type(%x) \n Width:%x, num of logical processor:%x\n", 
-                        GetBits(ecx, 8, 8), GetBits(eax, 0, 5), GetBits(ebx, 0, 8));
-    }
-
-    for(int i = 200; i < 210; i++){
-        SetIntrGate(i, 0, smp_interrupt[i - 200]);
-    }
-    memset(smp_ipi_desc, 0, sizeof(IrqDescT) * SMP_IPI_IRQS);
-
-    regitser_ipi(0xc8, NULL, &ipi_0x200, NULL, NULL, "IPI 0x200");
-
-    ColorPrintfk(   BLUE, BLACK, "x2APIC ID Level:(%x) \t x2APIC ID :%x\n", GetBits(ecx, 0, 8), edx);
-    memcopy(_APU_boot_start, (void *)(0xffff800000020000), (unsigned long)_APU_boot_end - (unsigned long)_APU_boot_start);
+void smp_kick(unsigned long mask){
+    send_mask(IPI_WAKE, mask & __atomic_load_n(&online, __ATOMIC_ACQUIRE) & ~(1UL << smp_cpu_id()));
+}
+void smp_timer_tick(void){
+    send_mask(IPI_TICK, __atomic_load_n(&online, __ATOMIC_ACQUIRE) & ~1UL);
+}
+static void tick_ipi(struct PtRegs *regs, unsigned long nr, unsigned long arg){
+    (void)regs; (void)nr; (void)arg;
+    scheduler_tick();
+}
+static void wake_ipi(struct PtRegs *regs, unsigned long nr, unsigned long arg){
+    (void)regs; (void)nr; (void)arg;
+    CURRENT->flags |= NEED_SCHEDULE;
+}
+static void tlb_ipi(struct PtRegs *regs, unsigned long nr, unsigned long arg){
+    (void)regs; (void)nr; (void)arg;
+    unsigned long bit = 1UL << smp_cpu_id();
+    if(!(__atomic_load_n(&flush_pending, __ATOMIC_ACQUIRE) & bit)) return;
+    int active = GetCr3() == flush_root;
+    if(active) __asm__ volatile("invlpg (%0)" :: "r"(flush_addr) : "memory");
+    __atomic_fetch_and(&flush_pending, ~bit, __ATOMIC_RELEASE);
+#ifdef TALIOS_SCHED_CHECK
+    static int reported;
+    if(active && !__atomic_exchange_n(&reported, 1, __ATOMIC_RELAXED))
+        ColorPrintfk(BLUE, BLACK, "SCHED remote TLB invalidation\n");
+#endif
 }
 
-
-void interrupt_cpu(unsigned long nr, unsigned long cpu){
-    int all = cpu == (unsigned long)-1 ? 1 : 0;
-
-    IcrEntry icr_entry;
-    icr_entry.vector = nr;
-    icr_entry.delivery_target.x2apic.target = all ? 0 : cpu;
-    icr_entry.Trigger = ICR_EDGE_TRIGGE;
-    icr_entry.DelivMode = ICR_FIXED_DELIVERY_MODE;
-    icr_entry.DelivStatus = ICR_FREE_DELIVERY;
-    icr_entry.DriveLevel = ICR_INVALID_LEVEL_TRIGGE;
-    icr_entry.short_hand = all ?  ICR_EXCLUDE_ALL_SHORTHAND: ICR_NO_SHORTHAND;
-    icr_entry.TarMode = ICR_PHYSIC_TARGET_MODE;
-    wrmsr(MSR_ICR, *(unsigned long *)&icr_entry);
+void vm_switch_root(int cpu, unsigned long pgd){
+    /* Interrupts are disabled across publication and the flushing CR3 load. */
+    __atomic_store_n(&active_root[cpu], pgd, __ATOMIC_SEQ_CST);
+    SetCr3(pgd);
 }
 
-
-void start_smp(){
-
-    if(!check_apic_x2apic()){
-        ColorPrintfk(BLUE, BLACK, "This chip is not support for apic\n");
-        hlt();
+void smp_invalidate(unsigned long pgd, unsigned long address){
+    unsigned long irq = irq_save();
+    unsigned long others = __atomic_load_n(&online, __ATOMIC_ACQUIRE) & ~(1UL << smp_cpu_id());
+    if(GetCr3() == pgd) __asm__ volatile("invlpg (%0)" :: "r"(address) : "memory");
+    if(others){
+        unsigned long targets = 0;
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        while(others){
+            int cpu = __builtin_ctzl(others);
+            if(__atomic_load_n(&active_root[cpu], __ATOMIC_SEQ_CST) == pgd) targets |= 1UL << cpu;
+            others &= others - 1;
+        }
+        if(targets){
+            flush_root = pgd;
+            flush_addr = address;
+            __atomic_store_n(&flush_pending, targets, __ATOMIC_RELEASE);
+            send_mask(IPI_TLB, targets);
+            while(__atomic_load_n(&flush_pending, __ATOMIC_ACQUIRE)) __asm__ volatile("pause");
+        }
     }
+    irq_restore(irq);
+}
 
+void smp_init(void){
+    for(int v = IPI_TICK; v <= IPI_TLB; v++) SetIntrGate(v, 0, smp_interrupt[v - 0xc8]);
+    regitser_ipi(IPI_TICK, NULL, tick_ipi, 0, NULL, "scheduler tick");
+    regitser_ipi(IPI_WAKE, NULL, wake_ipi, 0, NULL, "reschedule");
+    regitser_ipi(IPI_TLB, NULL, tlb_ipi, 0, NULL, "TLB invalidation");
+    active_root[0] = GetCr3();
+    smp_discover(get_lapic_id());
+    memcopy(_APU_boot_start, PHY_TO_VIRT(AP_BOOT_PHYS), _APU_boot_end - _APU_boot_start);
+    for(unsigned int cpu = 1; cpu < smp_cpu_count; cpu++){
+        union TaskUnion *idle = kmalloc(STACK_SIZE, 0);
+        void *exception_stack = kmalloc(STACK_SIZE, 0);
+        if(!idle || !exception_stack){
+            if(idle) kfree(idle);
+            if(exception_stack) kfree(exception_stack);
+            continue;
+        }
+        memset(idle, 0, sizeof(TaskStruct) + sizeof(struct ThreadStruct));
+        InitTaskUnions[cpu] = idle;
+        TaskStruct *t = &idle->task;
+        t->thread = (struct ThreadStruct *)(t + 1);
+        t->cpu_id = cpu;
+        t->state = TASK_RUNNING;
+        t->flags = PF_KTHREAD;
+        t->lmm = &InitLmm;
+        t->parent = &InitTaskUnions[0]->task;
+        t->AddrLimit = ~0UL;
+        ListInit(&t->list);
+        unsigned long top = (unsigned long)idle + STACK_SIZE;
+        t->thread->rsp0 = smp_stack_tops[cpu] = top;
+        t->thread->fs = t->thread->gs = KERNEL_DS;
+        unsigned long ist = (unsigned long)exception_stack + STACK_SIZE;
+        ((TaskStruct *)exception_stack)->cpu_id = cpu;
+        SetTss((unsigned int *)&InitTss[cpu], top, top, top, ist, ist, ist, ist, ist, ist, ist);
+        set_tss_descriptor(10 + 2 * cpu, &InitTss[cpu]);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        unsigned long target = (unsigned long)smp_apic_ids[cpu] << 32;
+        wrmsr(0x830, target | 0xc500);  /* INIT, level assert */
+        hpet_delay_us(10000);
+        for(int attempt = 0; attempt < 2; attempt++){
+            wrmsr(0x830, target | 0x600 | (AP_BOOT_PHYS >> 12));
+            hpet_delay_us(200);
+            if(__atomic_load_n(&online, __ATOMIC_ACQUIRE) & (1UL << cpu)) break;
+        }
+        for(int n = 0; n < 1000 && !(__atomic_load_n(&online, __ATOMIC_ACQUIRE) & (1UL << cpu)); n++)
+            hpet_delay_us(100);
+        if(!(__atomic_load_n(&online, __ATOMIC_ACQUIRE) & (1UL << cpu)))
+            ColorPrintfk(RED, BLACK, "CPU %d startup timed out\n", cpu);
+    }
+    unsigned long mask = __atomic_load_n(&online, __ATOMIC_ACQUIRE);
+    unsigned int n = 0;
+    while(mask){ n++; mask &= mask - 1; }
+    ColorPrintfk(BLUE, BLACK, "SMP online %d/%d CPUs\n", n, smp_cpu_count);
+}
+
+void start_smp(unsigned int cpu){
     enable_lapic();
     init_lapic_svr();
-
-    unsigned long ap_id = get_lapic_id();
-
-
-    InitTaskUnions[ap_id] = (union TaskUnion*)CURRENT;
-
-    CURRENT->state  =   TASK_UNINTERRUPTABLE;
-    CURRENT->flags  =   PF_KTHREAD;
-    CURRENT->lmm    =   &InitLmm;             
-    CURRENT->thread =   (struct ThreadStruct*)(CURRENT + 1);
-
-    memset((void *)CURRENT->thread, 0, sizeof(struct ThreadStruct));
-
-    CURRENT->thread->rsp0 = _stack_start;
-    CURRENT->thread->rsp  = _stack_start;
-    CURRENT->thread->fs     =   KERNEL_DS,
-    CURRENT->thread->gs     =   KERNEL_DS,
-
-    InitThreads[ap_id]      =   CURRENT->thread;
-
-    CURRENT->AddrLimit  = 0xffff800000000000;   
-    CURRENT->pid        = 0;   
-    CURRENT->counter    = 1;                    
-    CURRENT->signal     = 0;                    
-    CURRENT->priority   = 2;                    
-    CURRENT->vrun_time  = 0;                    
-    CURRENT->preempt_count = 0;                 
-    CURRENT->cpu_id     = ap_id;
-    
-    InitTask[ap_id] = CURRENT;
-
-    // spin_lock(&smp_lock);
-    LTR(10 + (ap_id * 2));
-    // __asm__ volatile("xchg %bx, %bx");
-
-    // int x = 1/0;
-
-    sti();
-    ColorPrintfk(BLUE, BLACK, "configuration finished in cpu : %X, rsp: %X\n", ap_id, _stack_start);
-    TaskInit();
-
-    __UNLOCK(&smp_lock);
-
-    while (1){
-        hlt();
-    }
+    set_lapic_tpr(0);
+    LTR(10 + 2 * cpu);
+    vm_cpu_init();
+    vm_switch_root(cpu, (unsigned long)InitLmm.pgd);
+    task_cpu_init();
+    __atomic_fetch_or(&online, 1UL << cpu, __ATOMIC_RELEASE);
+    sched_idle();
 }

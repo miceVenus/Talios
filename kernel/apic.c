@@ -240,8 +240,6 @@ void InitIoApic(){
     OUT8b(0x21, 0xff);
     OUT8b(0xa1, 0xff);
 
-    InitLocalApic();
-
     if(GetBits(IoApicVersion, 0, 8) == I440FX){
         // Enable intel 440 FX APIC
         unsigned int XBCS = ReadPci32(0, 1, 0, 0x4c);

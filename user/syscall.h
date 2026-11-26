@@ -16,6 +16,10 @@
 #define __NR_chdir      13
 #define __NR_fchdir     14
 #define __NR_getdents   15
+#define __NR_mmap       16
+#define __NR_munmap     17
+#define __NR_msync      18
+#define __NR_exit       19
 
 
 #endif

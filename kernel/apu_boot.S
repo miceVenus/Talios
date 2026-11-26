@@ -104,12 +104,9 @@ _APU_code64:
     movq    %rax,   %es
     movq    %rax,   %fs
     movq    %rax,   %gs
-    movq    %rax,   %es
 
-    movq    $0x100000, %rax
+    movabsq $ap_entry64, %rax
     jmpq    *%rax
-    
-    hlt
 
 
 .balign 4
